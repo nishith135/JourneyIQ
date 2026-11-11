@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-2xl font-bold text-white">Customer Journey Explorer</h1>
+    <p class="text-sm text-slate-400 mt-1">
+      Inspect reconstructed multi-session journeys, 7-day attribution outcomes, friction flags, and versioned recalculations.
+    </p>
+  </div>
+  <a href="/journeys/JRN-HERO-001"
+     class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow">
+    Open Canonical Hero Journey (JRN-HERO-001) &rarr;
+  </a>
+</div>
+
+<!-- Filters -->
+<form method="get" action="/journeys" class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6 grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
+  <div>
+    <label class="block text-slate-400 mb-1">Outcome Status</label>
+    <select name="outcome_status" onchange="this.form.submit()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200">
+      <option value="ALL" {% if outcome_status == 'ALL' %}selected{% endif %}>All Outcomes</option>
+      <option value="CONVERTED" {% if outcome_status == 'CONVERTED' %}selected{% endif %}>CONVERTED</option>
+      <option value="IN_PROGRESS" {% if outcome_status == 'IN_PROGRESS' %}selected{% endif %}>IN_PROGRESS (Window Open)</option>
+      <option value="NON_CONVERTED" {% if outcome_status == 'NON_CONVERTED' %}selected{% endif %}>NON_CONVERTED (Expired)</option>
+      <option value="EXCLUDED" {% if outcome_status == 'EXCLUDED' %}selected{% endif %}>EXCLUDED (Bot Traffic)</option>
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-slate-400 mb-1">Friction / Anomaly Flag</label>
+    <select name="friction_flag" onchange="this.form.submit()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200">
+      <option value="ALL" {% if friction_flag == 'ALL' %}selected{% endif %}>All Friction Flags</option>
+      <option value="PAYMENT_FAILURE" {% if friction_flag == 'PAYMENT_FAILURE' %}selected{% endif %}>PAYMENT_FAILURE</option>
+      <option value="CHECKOUT_RETRY" {% if friction_flag == 'CHECKOUT_RETRY' %}selected{% endif %}>CHECKOUT_RETRY</option>
+      <option value="SUPPORT_CONTACTED" {% if friction_flag == 'SUPPORT_CONTACTED' %}selected{% endif %}>SUPPORT_CONTACTED (Assisted)</option>
+      <option value="CART_ABANDONED" {% if friction_flag == 'CART_ABANDONED' %}selected{% endif %}>CART_ABANDONED (&ge;24h)</option>
+      <option value="LATE_EVENT" {% if friction_flag == 'LATE_EVENT' %}selected{% endif %}>LATE_EVENT (ANOM-001)</option>
+      <option value="DUPLICATE_SIGNAL" {% if friction_flag == 'DUPLICATE_SIGNAL' %}selected{% endif %}>DUPLICATE_SIGNAL (ANOM-003)</option>
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-slate-400 mb-1">Search ID / Customer / Anonymous</label>
+    <input type="text" name="search" value="{{ search }}" placeholder="e.g. JRN-HERO-001, CUS-0001..."
+           class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-500" />
+  </div>
+
+  <div class="flex items-end gap-2">
+    <button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium">
+      Filter Journeys
+    </button>
+    <a href="/journeys" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">Reset</a>
+  </div>
+</form>
+
+<!-- Journeys Table -->
+<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+  <div class="px-6 py-3.5 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
+    <span>Showing <strong class="text-white">{{ journeys | length }}</strong> journeys</span>
+    <span>Click any journey ID to inspect its full event timeline, payment attempts, support history, and consent audit.</span>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-left border-collapse text-sm">
+      <thead>
+        <tr class="border-b border-slate-800 bg-slate-950/60 text-xs uppercase text-slate-400">
+          <th class="py-3 px-4">Journey ID</th>
+          <th class="py-3 px-4">Subject (Customer / Anon)</th>
+          <th class="py-3 px-4">Channels</th>
+          <th class="py-3 px-4">Outcome Status</th>
+          <th class="py-3 px-4">Attribution</th>
+          <th class="py-3 px-4">Friction Flags</th>
+          <th class="py-3 px-4 text-right">Confirmed Rev</th>
+          <th class="py-3 px-4 text-right">Calc Ver</th>
+          <th class="py-3 px-4 text-right">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/70">
+        {% for j in journeys %}
+        <tr class="hover:bg-slate-800/40 {% if 'HERO' in j.journey_business_id %}bg-emerald-950/20{% endif %}">
+          <td class="py-3.5 px-4 font-mono font-semibold">
+            <a href="/journeys/{{ j.journey_business_id }}" class="text-indigo-400 hover:text-indigo-300 underline">
+              {{ j.journey_business_id }}
+            </a>
+          </td>
+          <td class="py-3.5 px-4 text-xs">
+            {% if j.customer_business_id %}
+              <div class="font-medium text-white">{{ j.customer_business_id }}</div>
+              <div class="text-slate-500">{{ j.customer_email }}</div>
+            {% else %}
+              <div class="font-mono text-slate-400">{{ j.anonymous_id }}</div>
+              <div class="text-slate-600">Unstitched / Anonymous</div>
+            {% endif %}
+          </td>
+          <td class="py-3.5 px-4 text-xs">
+            {% for ch in j.channels %}
+              <span class="inline-block px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono mr-1">{{ ch }}</span>
+            {% endfor %}
+            <span class="text-slate-500">({{ j.session_count }} sess)</span>
+          </td>
+          <td class="py-3.5 px-4 text-xs font-semibold">
+            {% if j.outcome_status == 'CONVERTED' %}
+              <span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">CONVERTED</span>
+            {% elif j.outcome_status == 'IN_PROGRESS' %}
+              <span class="px-2.5 py-1 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">IN_PROGRESS</span>
+            {% elif j.outcome_status == 'EXCLUDED' %}
+              <span class="px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">EXCLUDED</span>
+            {% else %}
+              <span class="px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">NON_CONVERTED</span>
+            {% endif %}
+          </td>
+          <td class="py-3.5 px-4 text-xs">
+            <span class="font-mono text-slate-300">{{ j.attribution_status }}</span>
+            {% if j.outcome_reason %}
+              <div class="text-[11px] text-slate-500">{{ j.outcome_reason }}</div>
+            {% endif %}
+          </td>
+          <td class="py-3.5 px-4 text-xs">
+            {% if j.friction_flags %}
+              <div class="flex flex-wrap gap-1">
+                {% for flg in j.friction_flags %}
+                  <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono text-[11px]">{{ flg }}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="text-slate-600">None</span>
+            {% endif %}
+          </td>
+          <td class="py-3.5 px-4 text-right font-mono text-slate-200">${{ "{:,.2f}".format(j.confirmed_revenue) }}</td>
+          <td class="py-3.5 px-4 text-right font-mono text-xs text-slate-400">{{ j.calculation_version }}</td>
+          <td class="py-3.5 px-4 text-right">
+            <a href="/journeys/{{ j.journey_business_id }}" class="px-3 py-1.5 rounded bg-slate-800 hover:bg-indigo-600 text-xs text-white transition">
+              Timeline &rarr;
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

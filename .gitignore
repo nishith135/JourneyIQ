@@ -1,0 +1,34 @@
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Generated datasets
+data-generation/output/*
+!data-generation/output/.gitkeep
+.pgdata/
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

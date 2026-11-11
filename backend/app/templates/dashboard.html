@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+  <div>
+    <h1 class="text-2xl font-bold text-white">Executive Journey &amp; Conversion Overview</h1>
+    <p class="text-sm text-slate-400 mt-1">
+      End-to-end reconstructed customer journeys across Web, App, Support, and Authoritative Purchase records.
+    </p>
+  </div>
+  <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs">
+    <span class="text-slate-400 px-2">Bot Traffic Filter (ANOM-004):</span>
+    <a href="/dashboard?exclude_bots=true"
+       class="px-3 py-1.5 rounded font-medium {% if exclude_bots %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800{% endif %}">
+      Human Only ({{ metrics.human_sessions }} sessions)
+    </a>
+    <a href="/dashboard?exclude_bots=false"
+       class="px-3 py-1.5 rounded font-medium {% if not exclude_bots %}bg-amber-600 text-white{% else %}text-slate-300 hover:bg-slate-800{% endif %}">
+      Include Bots ({{ metrics.total_sessions }} sessions)
+    </a>
+  </div>
+</div>
+
+<!-- Top KPI Grid -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">7-Day Journey Conversion</div>
+    <div class="mt-2 flex items-baseline gap-2">
+      <span class="text-3xl font-bold text-emerald-400">{{ metrics.journey_conversion_rate_pct }}%</span>
+      <span class="text-xs text-slate-400">({{ metrics.outcome_counts.CONVERTED }} / {{ metrics.eligible_journeys }} journeys)</span>
+    </div>
+    <div class="mt-2 text-xs text-slate-500">
+      Session-level conversion: <strong class="text-slate-300">{{ metrics.session_conversion_rate_pct }}%</strong>
+    </div>
+  </div>
+
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Authoritative Revenue</div>
+    <div class="mt-2 flex items-baseline gap-2">
+      <span class="text-3xl font-bold text-white">${{ "{:,.2f}".format(metrics.total_revenue) }}</span>
+      <span class="text-xs text-slate-400">({{ metrics.confirmed_orders }} orders)</span>
+    </div>
+    <div class="mt-2 text-xs text-emerald-400">
+      {{ metrics.duplicate_signals_suppressed }} duplicate purchase signals suppressed (ANOM-003)
+    </div>
+  </div>
+
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Friction &amp; Support Recovery</div>
+    <div class="mt-2 flex items-baseline gap-2">
+      <span class="text-3xl font-bold text-indigo-400">{{ metrics.assisted_conversions }}</span>
+      <span class="text-xs text-slate-400">support-assisted conversions</span>
+    </div>
+    <div class="mt-2 text-xs text-slate-400">
+      Payment retries recovered: <strong class="text-slate-200">{{ metrics.recovered_payment_orders }}</strong> ({{ metrics.failed_payment_attempts }} failed attempts)
+    </div>
+  </div>
+
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Data Quality Guardrails</div>
+    <div class="mt-2 flex items-baseline gap-2">
+      <span class="text-3xl font-bold text-amber-400">{{ metrics.quarantined_events }}</span>
+      <span class="text-xs text-slate-400">quarantined anomalies</span>
+    </div>
+    <div class="mt-2 text-xs text-slate-400">
+      Bot sessions isolated: <strong class="text-slate-200">{{ metrics.bot_sessions }}</strong> | Late events: <strong class="text-slate-200">{{ metrics.late_events_count }}</strong>
+    </div>
+  </div>
+</div>
+
+<!-- Charts & Outcome Breakdown -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+  <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-base font-semibold text-white">5-Stage Funnel Overview (Stage Reach vs. Strict Sequential)</h2>
+        <p class="text-xs text-slate-400">Direct purchases skipping cart are counted in Stage Reach without fabricating missing stages (FN-002).</p>
+      </div>
+      <a href="/funnels" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Full Funnel Analysis &rarr;</a>
+    </div>
+    <div class="h-64">
+      <canvas id="dashboardFunnelChart"></canvas>
+    </div>
+  </div>
+
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
+    <div>
+      <h2 class="text-base font-semibold text-white mb-1">Journey Outcome Distribution</h2>
+      <p class="text-xs text-slate-400 mb-4">Evaluated against 7-day attribution window from first touch (OUT-001–006).</p>
+      <div class="space-y-3 text-sm">
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+            <span>CONVERTED (Within 7d Window)</span>
+          </span>
+          <span class="font-bold text-emerald-400">{{ metrics.outcome_counts.CONVERTED }}</span>
+        </div>
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+            <span>IN_PROGRESS (Window Open &lt; 7d)</span>
+          </span>
+          <span class="font-bold text-sky-400">{{ metrics.outcome_counts.IN_PROGRESS }}</span>
+        </div>
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+            <span>NON_CONVERTED (Expired &ge; 7d)</span>
+          </span>
+          <span class="font-bold text-slate-300">{{ metrics.outcome_counts.NON_CONVERTED }}</span>
+        </div>
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
+            <span>EXCLUDED (Bot Traffic Isolated)</span>
+          </span>
+          <span class="font-bold text-rose-400">{{ metrics.outcome_counts.EXCLUDED }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-slate-400 flex justify-between">
+      <span>Abandoned Carts (&ge;24h): <strong class="text-amber-300">{{ metrics.abandoned_carts }}</strong></span>
+      <span>Out-of-Window (&gt;7d) Orders: <strong class="text-slate-200">{{ metrics.out_of_window_purchases }}</strong></span>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const ctx = document.getElementById('dashboardFunnelChart');
+    if (!ctx) return;
+    const stages = {{ funnel.stages | tojson }};
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: stages.map(s => s.stage_label),
+        datasets: [
+          {
+            label: 'Stage Reach (Any Order)',
+            data: stages.map(s => s.reach_count),
+            backgroundColor: 'rgba(99, 102, 241, 0.8)',
+            borderRadius: 6
+          },
+          {
+            label: 'Strict Sequential Progression (1→2→3→4→5)',
+            data: stages.map(s => s.sequential_count),
+            backgroundColor: 'rgba(16, 185, 129, 0.8)',
+            borderRadius: 6
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#cbd5e1' } }
+        },
+        scales: {
+          x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+          y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' }, beginAtZero: true }
+        }
+      }
+    });
+  })();
+</script>
+{% endblock %}
+
