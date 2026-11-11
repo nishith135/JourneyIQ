@@ -30,6 +30,251 @@ flowchart LR
 
 ---
 
+## Data Model (ER Diagram — 22 Tables)
+
+All `22` SQLAlchemy models in [`backend/app/models/entities.py`](backend/app/models/entities.py) share `UUID` primary keys alongside unique `*_business_id` identifiers, strict `CHECK` constraints, and `80` PostgreSQL indexes:
+
+```mermaid
+erDiagram
+    customer {
+        uuid customer_id PK
+        string customer_business_id UK
+        string email UK
+        string account_status
+    }
+    customer_journey {
+        uuid journey_id PK
+        string journey_business_id UK
+        uuid customer_id FK
+        string anonymous_id
+        string status
+        int identity_version
+        datetime first_touch_at
+        datetime window_end_at
+    }
+    session {
+        uuid session_id PK
+        string session_business_id UK
+        uuid customer_id FK
+        uuid journey_id FK
+        string client_instance_id
+        string channel
+        string traffic_classification
+        datetime started_at
+    }
+    journey_event {
+        uuid event_id PK
+        string event_business_id UK
+        uuid session_id FK
+        uuid customer_id FK
+        uuid product_id FK
+        uuid cart_id FK
+        uuid order_id FK
+        string event_type
+        string channel
+        datetime event_timestamp
+        datetime ingestion_timestamp
+    }
+    event_quarantine {
+        uuid quarantine_id PK
+        string quarantine_business_id UK
+        uuid event_id FK
+        string issue_type
+        string resolution_status
+        datetime detected_at
+    }
+    journey_outcome {
+        uuid outcome_id PK
+        string outcome_business_id UK
+        string scope_type
+        uuid session_id FK
+        uuid journey_id FK
+        uuid conversion_order_id FK
+        string outcome_status
+        string attribution_status
+    }
+    product {
+        uuid product_id PK
+        string product_business_id UK
+        string product_name
+        string category
+        decimal current_price
+    }
+    cart {
+        uuid cart_id PK
+        string cart_business_id UK
+        uuid customer_id FK
+        uuid session_id FK
+        string status
+    }
+    cart_item {
+        uuid cart_item_id PK
+        string cart_item_business_id UK
+        uuid cart_id FK
+        uuid product_id FK
+        int quantity
+        decimal unit_price
+    }
+    orders {
+        uuid order_id PK
+        string order_business_id UK
+        uuid customer_id FK
+        uuid cart_id FK
+        uuid session_id FK
+        string status
+        decimal total_amount
+        datetime purchase_confirmed_at
+    }
+    order_item {
+        uuid order_item_id PK
+        string order_item_business_id UK
+        uuid order_id FK
+        uuid product_id FK
+        int quantity
+        decimal line_total
+    }
+    payment_attempt {
+        uuid payment_attempt_id PK
+        string payment_attempt_business_id UK
+        uuid order_id FK
+        int attempt_number
+        decimal amount
+        string status
+    }
+    refund {
+        uuid refund_id PK
+        string refund_business_id UK
+        uuid order_id FK
+        decimal amount
+        string status
+    }
+    support_ticket {
+        uuid ticket_id PK
+        string ticket_business_id UK
+        uuid customer_id FK
+        uuid session_id FK
+        uuid order_id FK
+        uuid journey_id FK
+        string issue_type
+        string priority
+        string status
+    }
+    support_ticket_event {
+        uuid ticket_event_id PK
+        string ticket_event_business_id UK
+        uuid ticket_id FK
+        string new_status
+        datetime event_timestamp
+    }
+    consent_record {
+        uuid consent_record_id PK
+        string consent_business_id UK
+        uuid customer_id FK
+        string anonymous_id
+        string consent_purpose
+        string consent_status
+    }
+    identity_link {
+        uuid identity_link_id PK
+        string identity_link_business_id UK
+        uuid customer_id FK
+        uuid consent_record_id FK
+        string anonymous_id
+        string status
+    }
+    experiment {
+        uuid experiment_id PK
+        string experiment_business_id UK
+        string name
+        string status
+        int config_version
+    }
+    experiment_variant {
+        uuid variant_id PK
+        string variant_business_id UK
+        uuid experiment_id FK
+        string variant_name
+        bool is_control
+        decimal allocation_percentage
+    }
+    experiment_assignment {
+        uuid assignment_id PK
+        string assignment_business_id UK
+        uuid experiment_id FK
+        uuid variant_id FK
+        uuid identity_link_id FK
+        uuid consent_record_id FK
+        int assignment_bucket
+    }
+    experiment_exposure {
+        uuid exposure_id PK
+        string exposure_business_id UK
+        uuid assignment_id FK
+        uuid event_id FK
+        string channel
+        datetime exposed_at
+    }
+    audit_event {
+        uuid audit_event_id PK
+        string audit_business_id UK
+        string entity_type
+        uuid entity_id
+        string action
+        datetime occurred_at
+    }
+
+    customer ||--o{ customer_journey : "owns"
+    customer ||--o{ session : "initiates"
+    customer ||--o{ journey_event : "acts"
+    customer ||--o{ cart : "owns"
+    customer ||--o{ orders : "places"
+    customer ||--o{ support_ticket : "opens"
+    customer ||--o{ consent_record : "grants"
+    customer ||--o{ identity_link : "resolves to"
+
+    customer_journey ||--o{ session : "groups"
+    customer_journey ||--o{ support_ticket : "references"
+    customer_journey ||--o{ journey_outcome : "evaluates"
+
+    session ||--o{ journey_event : "contains"
+    session ||--o{ cart : "creates"
+    session ||--o{ orders : "converts to"
+    session ||--o{ support_ticket : "originates"
+    session ||--o{ journey_outcome : "evaluates"
+
+    product ||--o{ cart_item : "added to"
+    product ||--o{ order_item : "purchased in"
+    product ||--o{ journey_event : "viewed in"
+
+    cart ||--o{ cart_item : "contains"
+    cart ||--o{ orders : "checks out as"
+    cart ||--o{ journey_event : "referenced by"
+
+    orders ||--o{ order_item : "contains"
+    orders ||--o{ payment_attempt : "attempts"
+    orders ||--o{ refund : "refunds"
+    orders ||--o{ support_ticket : "concerns"
+    orders ||--o{ journey_event : "triggers"
+    orders ||--o{ journey_outcome : "converted order"
+
+    support_ticket ||--o{ support_ticket_event : "logs"
+    journey_event ||--o{ event_quarantine : "quarantines"
+    journey_event ||--o{ experiment_exposure : "records"
+
+    consent_record ||--o{ identity_link : "authorizes"
+    consent_record ||--o{ experiment_assignment : "governs"
+    identity_link ||--o{ experiment_assignment : "links"
+
+    experiment ||--o{ experiment_variant : "defines"
+    experiment ||--o{ experiment_assignment : "assigns"
+    experiment_variant ||--o{ experiment_assignment : "allocates"
+    experiment_assignment ||--o{ experiment_exposure : "exposes"
+```
+
+> `audit_event` records immutable state transitions via polymorphic `(entity_type, entity_id)` references across domain entities rather than a single database foreign key.
+
+---
+
 ## PostgreSQL & Environment Configuration
 
 Runtime database selection is explicit via `RUNTIME_DB_TARGET` in `.env` (copy from [`.env.example`](.env.example)):
