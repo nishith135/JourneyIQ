@@ -753,3 +753,120 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
         assert "EXP-CHECKOUT-001" in r_exp_ui.text
     finally:
         app.dependency_overrides.clear()
+
+
+def test_journeys_pagination_and_filter_preservation(db_session: Session) -> None:
+    """
+    Verify database-level pagination on /journeys and /api/v1/journeys strictly on journeyiq_test:
+    default UI page size 25, 100% non-duplicate reachability across all pages derived dynamically
+    from the verified test dataset, boundary disabled states, filter/search preservation across pages,
+    and safe handling of invalid page parameters.
+    """
+    import math
+    from sqlalchemy import func as sa_func
+
+    assert_safe_test_session(db_session)
+    generate_dataset(db_session, seed=42, scale="mvp", write_files=False)
+
+    expected_total = int(db_session.scalar(sa_func.count(CustomerJourney.journey_id)) or 0)
+    assert expected_total > 50  # Verified test dataset spans >= 3 pages of 25
+    expected_pages = math.ceil(expected_total / 25)
+    expected_last_start = (expected_pages - 1) * 25 + 1
+
+    def _override_get_db():
+        with TestSessionLocal() as test_db:
+            yield test_db
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        client = TestClient(app)
+
+        # Verify every single journey is reachable across pages 1..expected_pages with zero duplicates
+        seen_ids: list[str] = []
+        page_counts: list[int] = []
+        for page_num in range(1, expected_pages + 1):
+            r_api = client.get(f"/api/v1/journeys?page={page_num}&page_size=25")
+            assert r_api.status_code == 200
+            payload = r_api.json()
+            assert payload["total_count"] == expected_total
+            assert payload["page"] == page_num
+            assert payload["page_size"] == 25
+            assert payload["total_pages"] == expected_pages
+            page_counts.append(payload["count"])
+            seen_ids.extend(item["journey_business_id"] for item in payload["items"])
+
+        expected_last_count = expected_total - (expected_pages - 1) * 25
+        assert page_counts == [25] * (expected_pages - 1) + [expected_last_count]
+        assert len(seen_ids) == expected_total
+        assert len(set(seen_ids)) == expected_total
+        assert seen_ids[0] == "JRN-HERO-001"
+
+        # Default /api/v1/journeys contract still supports limit=100 default
+        r_api_default = client.get("/api/v1/journeys")
+        assert r_api_default.status_code == 200
+        assert r_api_default.json()["count"] == min(100, expected_total)
+
+        # First page HTML: Showing 1-25 of expected_total, Previous disabled, Next links to page 2
+        r_p1 = client.get("/journeys")
+        assert r_p1.status_code == 200
+        assert "1&ndash;25" in r_p1.text
+        assert f'of <strong class="text-white">{expected_total}</strong> journeys' in r_p1.text
+        assert f'Page <strong class="text-white">1</strong> of <strong class="text-white">{expected_pages}</strong>' in r_p1.text
+        assert 'href="/journeys?page=2"' in r_p1.text
+        assert '<button type="button" disabled aria-disabled="true"' in r_p1.text
+
+        # Middle page HTML (Page 2): Showing 26-50, both Previous and Next enabled
+        r_p2 = client.get("/journeys?page=2")
+        assert r_p2.status_code == 200
+        assert "26&ndash;50" in r_p2.text
+        assert f'Page <strong class="text-white">2</strong> of <strong class="text-white">{expected_pages}</strong>' in r_p2.text
+        assert 'href="/journeys?page=1"' in r_p2.text
+        assert 'href="/journeys?page=3"' in r_p2.text
+        assert '<button type="button" disabled' not in r_p2.text
+
+        # Final page HTML: Showing expected_last_start-expected_total, Next disabled
+        r_plast = client.get(f"/journeys?page={expected_pages}")
+        assert r_plast.status_code == 200
+        assert f"{expected_last_start}&ndash;{expected_total}" in r_plast.text
+        assert f'Page <strong class="text-white">{expected_pages}</strong> of <strong class="text-white">{expected_pages}</strong>' in r_plast.text
+        assert f'href="/journeys?page={expected_pages - 1}"' in r_plast.text
+        assert '<button type="button" disabled aria-disabled="true"' in r_plast.text
+
+        # Filter + search query parameter preservation across pages without duplicates
+        r_filt_api = client.get("/api/v1/journeys?outcome_status=CONVERTED&search=JRN-&page_size=25")
+        assert r_filt_api.status_code == 200
+        filt_meta = r_filt_api.json()
+        assert filt_meta["total_count"] > 25
+        assert filt_meta["total_pages"] >= 2
+
+        r_filt_ui = client.get("/journeys?outcome_status=CONVERTED&search=JRN-&page=2")
+        assert r_filt_ui.status_code == 200
+        assert 'Page <strong class="text-white">2</strong>' in r_filt_ui.text
+        assert "outcome_status=CONVERTED" in r_filt_ui.text
+        assert "search=JRN-" in r_filt_ui.text
+
+        # Friction flag JSONB filtering at SQL level
+        r_flag_api = client.get("/api/v1/journeys?friction_flag=PAYMENT_FAILURE")
+        assert r_flag_api.status_code == 200
+        assert r_flag_api.json()["total_count"] > 0
+        assert any(item["journey_business_id"] == "JRN-HERO-001" for item in r_flag_api.json()["items"])
+
+        # Invalid / out-of-range page parameters handled safely without errors
+        for invalid in ("0", "-5", "abc"):
+            r_inv = client.get(f"/journeys?page={invalid}")
+            assert r_inv.status_code == 200
+            assert "1&ndash;25" in r_inv.text
+            assert f'Page <strong class="text-white">1</strong> of <strong class="text-white">{expected_pages}</strong>' in r_inv.text
+
+        r_overflow = client.get("/journeys?page=999")
+        assert r_overflow.status_code == 200
+        assert f"{expected_last_start}&ndash;{expected_total}" in r_overflow.text
+        assert f'Page <strong class="text-white">{expected_pages}</strong> of <strong class="text-white">{expected_pages}</strong>' in r_overflow.text
+
+        # Empty search result renders safely with 0 count and both buttons disabled
+        r_empty = client.get("/journeys?search=NO_SUCH_JOURNEY_999")
+        assert r_empty.status_code == 200
+        assert "No journeys matched the selected filters." in r_empty.text
+        assert 'Page <strong class="text-white">1</strong> of <strong class="text-white">1</strong>' in r_empty.text
+    finally:
+        app.dependency_overrides.clear()

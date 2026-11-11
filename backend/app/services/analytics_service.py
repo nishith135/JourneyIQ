@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Integer, case, cast, exists, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
@@ -319,62 +321,156 @@ def get_funnel_metrics(
     }
 
 
-def list_journeys(
+def _query_journeys_page(
     db: Session,
     *,
     outcome_status: str | None = None,
     friction_flag: str | None = None,
     search: str | None = None,
-    limit: int = 100,
-) -> list[dict[str, Any]]:
-    journeys = list(db.scalars(select(CustomerJourney)).all())
-    customers = {c.customer_id: c for c in db.scalars(select(Customer)).all()}
-    sessions = list(db.scalars(select(SessionRecord)).all())
-    orders = list(db.scalars(select(Order)).all())
-    latest_outcomes = _get_latest_journey_outcomes(db)
+    page: int = 1,
+    page_size: int = 25,
+    offset_override: int | None = None,
+) -> dict[str, Any]:
+    """Execute filtered, hero-first ordered journey pagination at the database level."""
+    version_num = func.coalesce(
+        func.cast(
+            func.nullif(func.regexp_replace(JourneyOutcome.calculation_version, r"[^0-9]", "", "g"), ""),
+            Integer,
+        ),
+        1,
+    )
+    ranked_outcomes = (
+        select(
+            JourneyOutcome.journey_id.label("journey_id"),
+            JourneyOutcome.outcome_status.label("outcome_status"),
+            JourneyOutcome.attribution_status.label("attribution_status"),
+            JourneyOutcome.outcome_reason.label("outcome_reason"),
+            JourneyOutcome.friction_flags.label("friction_flags"),
+            JourneyOutcome.calculation_version.label("calculation_version"),
+            func.row_number()
+            .over(
+                partition_by=JourneyOutcome.journey_id,
+                order_by=(
+                    version_num.desc(),
+                    JourneyOutcome.calculated_at.desc(),
+                    JourneyOutcome.outcome_id.desc(),
+                ),
+            )
+            .label("rn"),
+        )
+        .where(
+            JourneyOutcome.scope_type == "CUSTOMER_JOURNEY",
+            JourneyOutcome.journey_id.is_not(None),
+        )
+        .subquery()
+    )
+    latest_outcome = select(ranked_outcomes).where(ranked_outcomes.c.rn == 1).subquery()
 
+    effective_outcome_status = func.coalesce(latest_outcome.c.outcome_status, "IN_PROGRESS")
+    base_stmt = (
+        select(
+            CustomerJourney,
+            Customer,
+            latest_outcome.c.outcome_status,
+            latest_outcome.c.attribution_status,
+            latest_outcome.c.outcome_reason,
+            latest_outcome.c.friction_flags,
+            latest_outcome.c.calculation_version,
+        )
+        .outerjoin(Customer, CustomerJourney.customer_id == Customer.customer_id)
+        .outerjoin(latest_outcome, CustomerJourney.journey_id == latest_outcome.c.journey_id)
+    )
+
+    if outcome_status and outcome_status != "ALL":
+        base_stmt = base_stmt.where(effective_outcome_status == outcome_status)
+
+    if friction_flag and friction_flag != "ALL":
+        base_stmt = base_stmt.where(
+            latest_outcome.c.friction_flags.is_not(None),
+            cast(latest_outcome.c.friction_flags, JSONB).contains([friction_flag]),
+        )
+
+    if search and search.strip():
+        q = search.strip()
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        session_match = exists(
+            select(SessionRecord.session_id).where(
+                SessionRecord.journey_id == CustomerJourney.journey_id,
+                SessionRecord.session_business_id.ilike(pattern, escape="\\"),
+            )
+        )
+        base_stmt = base_stmt.where(
+            or_(
+                CustomerJourney.journey_business_id.ilike(pattern, escape="\\"),
+                Customer.customer_business_id.ilike(pattern, escape="\\"),
+                CustomerJourney.anonymous_id.ilike(pattern, escape="\\"),
+                session_match,
+            )
+        )
+
+    count_stmt = select(func.count()).select_from(
+        base_stmt.with_only_columns(CustomerJourney.journey_id).subquery()
+    )
+    total_count = int(db.scalar(count_stmt) or 0)
+
+    safe_page_size = max(1, page_size)
+    total_pages = max(1, math.ceil(total_count / safe_page_size))
+    if offset_override is not None:
+        effective_offset = max(0, offset_override)
+        safe_page = min((effective_offset // safe_page_size) + 1, total_pages)
+    else:
+        safe_page = min(max(1, page), total_pages)
+        effective_offset = (safe_page - 1) * safe_page_size
+
+    ordered_stmt = (
+        base_stmt.order_by(
+            case((CustomerJourney.journey_business_id.contains("HERO"), 0), else_=1),
+            CustomerJourney.journey_business_id.asc(),
+        )
+        .limit(safe_page_size)
+        .offset(effective_offset)
+    )
+    page_tuples = db.execute(ordered_stmt).all()
+
+    page_journey_ids = [j.journey_id for j, *_ in page_tuples]
     sessions_by_journey: dict[uuid.UUID, list[SessionRecord]] = {}
-    for s in sessions:
-        if s.journey_id:
-            sessions_by_journey.setdefault(s.journey_id, []).append(s)
-
     orders_by_session: dict[uuid.UUID, list[Order]] = {}
-    for o in orders:
-        if o.session_id:
-            orders_by_session.setdefault(o.session_id, []).append(o)
+    if page_journey_ids:
+        page_sessions = list(
+            db.scalars(
+                select(SessionRecord).where(SessionRecord.journey_id.in_(page_journey_ids))
+            ).all()
+        )
+        for s in page_sessions:
+            if s.journey_id:
+                sessions_by_journey.setdefault(s.journey_id, []).append(s)
+
+        page_session_ids = [s.session_id for s in page_sessions]
+        if page_session_ids:
+            page_orders = list(
+                db.scalars(select(Order).where(Order.session_id.in_(page_session_ids))).all()
+            )
+            for o in page_orders:
+                if o.session_id:
+                    orders_by_session.setdefault(o.session_id, []).append(o)
 
     rows: list[dict[str, Any]] = []
-    for j in journeys:
-        out = latest_outcomes.get(j.journey_id)
-        out_status = out.outcome_status if out else "IN_PROGRESS"
-        attr_status = out.attribution_status if out else "UNATTRIBUTED"
-        flags = list(out.friction_flags or []) if out else []
-        calc_ver = out.calculation_version if out else "v1"
-
-        if outcome_status and outcome_status != "ALL" and out_status != outcome_status:
-            continue
-        if friction_flag and friction_flag != "ALL" and friction_flag not in flags:
-            continue
-
-        cust = customers.get(j.customer_id) if j.customer_id else None
+    for (
+        j,
+        cust,
+        out_status_col,
+        attr_status_col,
+        out_reason_col,
+        flags_col,
+        calc_ver_col,
+    ) in page_tuples:
+        out_status = out_status_col or "IN_PROGRESS"
+        attr_status = attr_status_col or "UNATTRIBUTED"
+        flags = list(flags_col or [])
+        calc_ver = calc_ver_col or "v1"
         cust_biz = cust.customer_business_id if cust else None
         j_sessions = sessions_by_journey.get(j.journey_id, [])
-
-        if search and search.strip():
-            q = search.strip().lower()
-            haystack = " ".join(
-                filter(
-                    None,
-                    [
-                        j.journey_business_id,
-                        cust_biz,
-                        j.anonymous_id,
-                        *(s.session_business_id for s in j_sessions),
-                    ],
-                )
-            ).lower()
-            if q not in haystack:
-                continue
 
         j_orders: list[Order] = []
         for s in j_sessions:
@@ -397,7 +493,7 @@ def list_journeys(
                 "identity_version": j.identity_version,
                 "outcome_status": out_status,
                 "attribution_status": attr_status,
-                "outcome_reason": out.outcome_reason if out else None,
+                "outcome_reason": out_reason_col,
                 "calculation_version": calc_ver,
                 "friction_flags": flags,
                 "session_count": len(j_sessions),
@@ -406,14 +502,60 @@ def list_journeys(
             }
         )
 
-    # Sort with hero journey first, then by first_touch_at DESC
-    rows.sort(
-        key=lambda r: (
-            0 if "HERO" in r["journey_business_id"] else 1,
-            r["journey_business_id"],
-        )
+    start_index = 0 if total_count == 0 or not rows else effective_offset + 1
+    end_index = 0 if total_count == 0 or not rows else effective_offset + len(rows)
+
+    return {
+        "items": rows,
+        "total_count": total_count,
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "total_pages": total_pages,
+        "start_index": start_index,
+        "end_index": end_index,
+        "has_prev": safe_page > 1,
+        "has_next": safe_page < total_pages,
+    }
+
+
+def list_journeys_paginated(
+    db: Session,
+    *,
+    outcome_status: str | None = None,
+    friction_flag: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict[str, Any]:
+    """Return a paginated slice of reconstructed journeys plus total count and bounds."""
+    return _query_journeys_page(
+        db,
+        outcome_status=outcome_status,
+        friction_flag=friction_flag,
+        search=search,
+        page=page,
+        page_size=page_size,
     )
-    return rows[:limit]
+
+
+def list_journeys(
+    db: Session,
+    *,
+    outcome_status: str | None = None,
+    friction_flag: str | None = None,
+    search: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Return a slice of reconstructed journeys ordered hero-first via database pagination."""
+    return _query_journeys_page(
+        db,
+        outcome_status=outcome_status,
+        friction_flag=friction_flag,
+        search=search,
+        page_size=limit,
+        offset_override=offset,
+    )["items"]
 
 
 def get_journey_detail(db: Session, journey_identifier: str) -> dict[str, Any] | None:

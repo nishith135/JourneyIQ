@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -21,7 +22,7 @@ from app.services.analytics_service import (
     get_experiments_summary,
     get_funnel_metrics,
     get_journey_detail,
-    list_journeys,
+    list_journeys_paginated,
 )
 from app.services.domain_service import calculate_journey_outcome, withdraw_consent
 
@@ -77,22 +78,73 @@ def api_funnels(
     return get_funnel_metrics(db, channel=ch, exclude_bots=exclude_bots)
 
 
+def _parse_page_param(raw: str | None, *, default: int = 1, max_val: int | None = None, zero_fallback: int = 1) -> int:
+    """Safely parse page/page_size query params without raising 422 on invalid input."""
+    if raw is None or not raw.strip():
+        return default
+    try:
+        val = int(raw.strip())
+    except ValueError:
+        return default
+    if val < 1:
+        return zero_fallback
+    if max_val is not None and val > max_val:
+        return max_val
+    return val
+
+
+def _build_journeys_url(
+    *,
+    page: int,
+    page_size: int,
+    outcome_status: str,
+    friction_flag: str,
+    search: str,
+) -> str:
+    """Build /journeys URL preserving active filter/search query parameters."""
+    params: dict[str, str | int] = {"page": page}
+    if page_size != 25:
+        params["page_size"] = page_size
+    if outcome_status and outcome_status != "ALL":
+        params["outcome_status"] = outcome_status
+    if friction_flag and friction_flag != "ALL":
+        params["friction_flag"] = friction_flag
+    if search and search.strip():
+        params["search"] = search.strip()
+    return f"/journeys?{urlencode(params)}"
+
+
 @app.get("/api/v1/journeys")
 def api_list_journeys(
     outcome_status: str | None = Query(None),
     friction_flag: str | None = Query(None),
     search: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    page_size: int | None = Query(None, ge=1, le=500),
+    limit: int | None = Query(None, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    rows = list_journeys(
+    effective_page_size = page_size or limit or 100
+    result = list_journeys_paginated(
         db,
         outcome_status=outcome_status,
         friction_flag=friction_flag,
         search=search,
-        limit=limit,
+        page=page,
+        page_size=effective_page_size,
     )
-    return {"count": len(rows), "items": rows}
+    return {
+        "count": len(result["items"]),
+        "total_count": result["total_count"],
+        "page": result["page"],
+        "page_size": result["page_size"],
+        "total_pages": result["total_pages"],
+        "start_index": result["start_index"],
+        "end_index": result["end_index"],
+        "has_prev": result["has_prev"],
+        "has_next": result["has_next"],
+        "items": result["items"],
+    }
 
 
 @app.get("/api/v1/journeys/{journey_identifier}")
@@ -253,23 +305,62 @@ def view_journeys(
     outcome_status: str = Query("ALL"),
     friction_flag: str = Query("ALL"),
     search: str = Query(""),
+    page: str | None = Query(None),
+    page_size: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    rows = list_journeys(
+    safe_page = _parse_page_param(page, default=1, zero_fallback=1)
+    safe_page_size = _parse_page_param(page_size, default=25, max_val=100, zero_fallback=25)
+    result = list_journeys_paginated(
         db,
         outcome_status=outcome_status if outcome_status != "ALL" else None,
         friction_flag=friction_flag if friction_flag != "ALL" else None,
         search=search if search.strip() else None,
+        page=safe_page,
+        page_size=safe_page_size,
+    )
+    curr_page = result["page"]
+    prev_url = (
+        _build_journeys_url(
+            page=curr_page - 1,
+            page_size=safe_page_size,
+            outcome_status=outcome_status,
+            friction_flag=friction_flag,
+            search=search,
+        )
+        if result["has_prev"]
+        else None
+    )
+    next_url = (
+        _build_journeys_url(
+            page=curr_page + 1,
+            page_size=safe_page_size,
+            outcome_status=outcome_status,
+            friction_flag=friction_flag,
+            search=search,
+        )
+        if result["has_next"]
+        else None
     )
     return templates.TemplateResponse(
         request,
         "journeys.html",
         {
             "active_nav": "journeys",
-            "journeys": rows,
+            "journeys": result["items"],
             "outcome_status": outcome_status,
             "friction_flag": friction_flag,
             "search": search,
+            "page": curr_page,
+            "page_size": result["page_size"],
+            "total_count": result["total_count"],
+            "total_pages": result["total_pages"],
+            "start_index": result["start_index"],
+            "end_index": result["end_index"],
+            "has_prev": result["has_prev"],
+            "has_next": result["has_next"],
+            "prev_url": prev_url,
+            "next_url": next_url,
         },
     )
 
