@@ -15,14 +15,14 @@
 
 <!-- 4 Data Quality Summary Cards -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-amber-400 uppercase tracking-wider">Timing Guardrail</div>
     <div class="text-sm font-semibold text-white mt-0.5">Late-Arriving Events</div>
     <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_001_late_events }}</div>
     <p class="text-xs text-slate-400 mt-2">Ordered by Event time rather than Received time to preserve accurate journey sequence.</p>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-rose-400 uppercase tracking-wider">Identity &amp; Consent</div>
     <div class="text-sm font-semibold text-white mt-0.5">Blocked Identity Merges</div>
     <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_002_identity_exceptions }}</div>
@@ -31,14 +31,14 @@
     </p>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-emerald-400 uppercase tracking-wider">Revenue Integrity</div>
     <div class="text-sm font-semibold text-white mt-0.5">Duplicate Purchase Signals</div>
     <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_003_duplicate_conversions_suppressed }}</div>
     <p class="text-xs text-slate-400 mt-2">Deduplicated against confirmed orders using each order's authoritative Purchase reference.</p>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-indigo-400 uppercase tracking-wider">Traffic Filtering</div>
     <div class="text-sm font-semibold text-white mt-0.5">Bot Sessions Isolated</div>
     <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_004_bot_sessions_isolated }}</div>
@@ -48,7 +48,7 @@
 
 <!-- Quarantined Records Table -->
 <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-8">
-  <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+  <div class="px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
     <div>
       <h2 class="text-base font-semibold text-white">Event Quarantine Queue ({{ exc.summary_counts.total_quarantined }} Total | {{ exc.summary_counts.open_quarantined }} Open)</h2>
       <p class="text-xs text-slate-400">Captures events missing a Client instance on Web/App, conflicting identity links, and merges blocked without consent.</p>
@@ -58,40 +58,100 @@
     <table class="w-full text-left border-collapse text-xs">
       <thead>
         <tr class="border-b border-slate-800 bg-slate-950/60 uppercase text-slate-400">
-          <th class="py-3 px-4">Record ID</th>
-          <th class="py-3 px-4">Issue Type</th>
-          <th class="py-3 px-4">Reason &amp; Detail</th>
-          <th class="py-3 px-4">Detected</th>
-          <th class="py-3 px-4">Status</th>
-          <th class="py-3 px-4 text-right">Action</th>
+          <th class="py-3 px-4 whitespace-nowrap">Record ID</th>
+          <th class="py-3 px-4 whitespace-nowrap">Issue Type</th>
+          <th class="py-3 px-4">Summary &amp; Business Impact</th>
+          <th class="py-3 px-4 whitespace-nowrap">Detected</th>
+          <th class="py-3 px-4 whitespace-nowrap">Status</th>
+          <th class="py-3 px-4 text-right whitespace-nowrap">Action / Resolution</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/70">
         {% for q in exc.quarantined_items %}
         <tr class="hover:bg-slate-800/40">
-          <td class="py-3 px-4 font-mono text-indigo-300">{{ q.quarantine_business_id }}</td>
-          <td class="py-3 px-4">
-            <span class="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 font-medium whitespace-nowrap" title="{{ q.issue_type }}">
+          <td class="py-3.5 px-4 font-mono text-indigo-300 whitespace-nowrap align-top">{{ q.quarantine_business_id }}</td>
+          <td class="py-3.5 px-4 align-top">
+            <span class="px-2 py-0.5 rounded border font-medium whitespace-nowrap {{ q.issue_type | quarantine_badge_class }}" title="{{ q.issue_type }}">
               {{ q.issue_type | label_quarantine_issue }}
             </span>
           </td>
-          <td class="py-3 px-4 text-slate-300 max-w-xl">{{ q.reason }}</td>
-          <td class="py-3 px-4 text-slate-400 whitespace-nowrap" title="{{ q.detected_at }}">{{ q.detected_at | format_ts }}</td>
-          <td class="py-3 px-4">
-            <span class="px-2 py-0.5 rounded font-semibold {% if q.resolution_status == 'OPEN' %}bg-amber-500/20 text-amber-300{% else %}bg-emerald-500/20 text-emerald-300{% endif %}" title="{{ q.resolution_status }}">
+          <td class="py-3.5 px-4 text-slate-200 max-w-xl align-top">
+            <div class="font-medium text-slate-100 leading-snug">
+              {{ q.issue_type | summarize_quarantine_issue(q.reason) }}
+            </div>
+            <div class="text-[11px] text-slate-400 mt-1">
+              {{ q.issue_type | describe_quarantine_impact }}
+            </div>
+            <details class="mt-2 text-[11px] text-slate-400">
+              <summary class="cursor-pointer text-indigo-400 hover:text-indigo-300 select-none font-medium">
+                Technical Details
+              </summary>
+              <div class="mt-2 p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1 font-mono break-words">
+                <div><span class="text-slate-500">Issue code:</span> {{ q.issue_type }}</div>
+                <div><span class="text-slate-500">Quarantine ID:</span> {{ q.quarantine_id }}</div>
+                {% if q.event_id %}
+                <div><span class="text-slate-500">Event ID:</span> {{ q.event_id }}</div>
+                {% endif %}
+                <div><span class="text-slate-500">Raw reason:</span> <span class="text-slate-300">{{ q.reason }}</span></div>
+                {% if q.resolved_at %}
+                <div><span class="text-slate-500">Reviewed at:</span> {{ q.resolved_at | format_ts }} ({{ q.resolved_at }})</div>
+                {% endif %}
+                {% if q.resolution_notes %}
+                <div><span class="text-slate-500">Resolution notes:</span> <span class="text-slate-300">{{ q.resolution_notes }}</span></div>
+                {% endif %}
+              </div>
+            </details>
+          </td>
+          <td class="py-3.5 px-4 text-slate-400 whitespace-nowrap align-top" title="{{ q.detected_at }}">{{ q.detected_at | format_ts }}</td>
+          <td class="py-3.5 px-4 align-top">
+            <span class="px-2 py-0.5 rounded font-semibold whitespace-nowrap {% if q.resolution_status == 'OPEN' %}bg-amber-500/20 text-amber-300{% elif q.resolution_status == 'DISMISSED' %}bg-slate-700/60 text-slate-300{% else %}bg-emerald-500/20 text-emerald-300{% endif %}" title="{{ q.resolution_status }}">
               {{ q.resolution_status | label_status }}
             </span>
           </td>
-          <td class="py-3 px-4 text-right">
+          <td class="py-3.5 px-4 text-right align-top">
             {% if q.resolution_status == 'OPEN' %}
-            <form method="post" action="/exceptions/quarantine/{{ q.quarantine_id }}/resolve-ui" class="inline-flex gap-1">
-              <input type="hidden" name="resolution_status" value="RESOLVED" />
-              <button type="submit" class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium whitespace-nowrap">
-                Mark Resolved
-              </button>
+            <form method="post" action="/exceptions/quarantine/{{ q.quarantine_id }}/resolve-ui" class="inline-flex flex-col items-end gap-1.5 min-w-[200px]">
+              <input
+                type="text"
+                name="resolution_notes"
+                placeholder="Optional note..."
+                aria-label="Optional resolution note for {{ q.quarantine_business_id }}"
+                class="w-full px-2.5 py-1 rounded bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 text-xs focus:outline-none focus:border-indigo-500"
+              />
+              <div class="inline-flex items-center gap-1.5">
+                <button
+                  type="submit"
+                  name="resolution_status"
+                  value="RESOLVED"
+                  data-confirm="Mark {{ q.quarantine_business_id }} as resolved?"
+                  onclick="return confirm(this.dataset.confirm);"
+                  class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium whitespace-nowrap"
+                >
+                  Resolve
+                </button>
+                <button
+                  type="submit"
+                  name="resolution_status"
+                  value="DISMISSED"
+                  data-confirm="Dismiss {{ q.quarantine_business_id }}?"
+                  onclick="return confirm(this.dataset.confirm);"
+                  class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium whitespace-nowrap"
+                >
+                  Dismiss
+                </button>
+              </div>
             </form>
             {% else %}
-              <span class="text-slate-500">Reviewed</span>
+            <div class="text-right space-y-1 max-w-[220px] ml-auto">
+              {% if q.resolved_at %}
+              <div class="text-slate-300 whitespace-nowrap" title="{{ q.resolved_at }}">{{ q.resolved_at | format_ts }}</div>
+              {% else %}
+              <div class="text-slate-400">Reviewed</div>
+              {% endif %}
+              {% if q.resolution_notes %}
+              <div class="text-[11px] text-slate-400 break-words">{{ q.resolution_notes }}</div>
+              {% endif %}
+            </div>
             {% endif %}
           </td>
         </tr>
@@ -105,15 +165,15 @@
   </div>
 </div>
 
-<!-- Detailed Tabs: Late Events & Duplicate Signals -->
+<!-- Detailed Panels: Late Events & Duplicate Signals -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-6">
     <h2 class="text-base font-semibold text-white mb-2">Late-Arriving Event Reconstruction</h2>
     <p class="text-xs text-slate-400 mb-4">Events whose Received time arrived more than 5 minutes after Event time.</p>
     <div class="space-y-2 text-xs max-h-80 overflow-y-auto">
       {% for le in exc.late_events %}
         <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
-          <div>
+          <div class="min-w-0">
             <span class="font-mono font-bold text-amber-300">{{ le.event_business_id }}</span>
             <span class="text-white font-semibold ml-2" title="{{ le.event_type }}">{{ le.event_type | label_event }} ({{ le.channel | label_channel }})</span>
             <div class="text-slate-400 mt-1">
@@ -129,17 +189,17 @@
     </div>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-6">
     <h2 class="text-base font-semibold text-white mb-2">Suppressed Duplicate Purchase Signals</h2>
     <p class="text-xs text-slate-400 mb-4">Audit log of duplicate purchase notifications deduplicated against confirmed orders.</p>
     <div class="space-y-2 text-xs max-h-80 overflow-y-auto">
       {% for ds in exc.duplicate_signals %}
         <div class="p-3 rounded bg-slate-950 border border-slate-800">
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <span class="font-mono font-bold text-emerald-400">{{ ds.audit_business_id }}</span>
             <span class="text-slate-400" title="{{ ds.occurred_at }}">{{ ds.occurred_at | format_ts }}</span>
           </div>
-          <div class="mt-1 text-slate-300">
+          <div class="mt-1 text-slate-300 break-words">
             Confirmed Order: <span class="font-mono">{{ ds.details.existing_order_business_id }}</span> &bull;
             Purchase reference: <span class="font-mono">{{ ds.details.source_purchase_reference }}</span> ({{ ds.details.purchase_source | label_source }})
           </div>
@@ -148,6 +208,36 @@
         <div class="text-slate-500">No duplicate purchase signals recorded.</div>
       {% endfor %}
     </div>
+  </div>
+</div>
+
+<!-- Bot Sessions Isolated -->
+<div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+    <div>
+      <h2 class="text-base font-semibold text-white">Isolated Bot Sessions ({{ exc.summary_counts.anom_004_bot_sessions_isolated }})</h2>
+      <p class="text-xs text-slate-400">Automated traffic sessions excluded from human journey and conversion denominators.</p>
+    </div>
+  </div>
+  <div class="space-y-2 text-xs max-h-80 overflow-y-auto">
+    {% for bot in exc.bot_sessions %}
+      <div class="p-3 rounded bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0 space-y-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-mono font-bold text-indigo-300">{{ bot.session_business_id }}</span>
+            <span class="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-medium" title="{{ bot.channel }}">
+              {{ bot.channel | label_channel }}
+            </span>
+            <span class="text-slate-200 font-medium" title="{{ bot.classification_reason }}">
+              {{ bot.classification_reason | label_bot_reason }}
+            </span>
+          </div>
+        </div>
+        <span class="text-slate-400 whitespace-nowrap" title="{{ bot.started_at }}">{{ bot.started_at | format_ts }}</span>
+      </div>
+    {% else %}
+      <div class="text-slate-500">No isolated bot sessions recorded.</div>
+    {% endfor %}
   </div>
 </div>
 

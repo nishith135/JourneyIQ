@@ -20,8 +20,14 @@ for p in (BACKEND_DIR, DATA_GEN_DIR, DATA_VAL_DIR):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from app.core.config import settings
-from app.db.session import Base, get_db
+from app.core.config import LIVE_DEMO_OUTPUT_DIR, settings
+from app.db.session import (
+    Base,
+    assert_safe_isolated_database_url,
+    get_db,
+    get_runtime_database_info,
+    resolve_runtime_database_url,
+)
 from app.main import app
 from app.models.entities import (
     Cart,
@@ -58,24 +64,31 @@ from generate_data import generate_dataset
 from validate_data import validate_database
 
 def assert_safe_test_database_url(test_url: str | None, primary_url: str) -> str:
-    """Fail-fast guard preventing destructive tests from targeting the primary database."""
+    """Fail-fast guard preventing destructive tests from targeting the primary or sandbox database."""
     if not test_url or not test_url.strip():
         raise RuntimeError(
             "TEST_DATABASE_URL is not configured. Refusing to run destructive database tests."
         )
+    try:
+        assert_safe_isolated_database_url(test_url, primary_url=primary_url)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     parsed_test = make_url(test_url)
-    parsed_primary = make_url(primary_url)
     db_name = (parsed_test.database or "").strip()
-    primary_db_name = (parsed_primary.database or "").strip()
-
-    if not db_name or db_name == "journeyiq" or db_name == primary_db_name:
-        raise RuntimeError(
-            f"Unsafe test database '{db_name}': destructive tests cannot target primary database '{primary_db_name}'."
-        )
     if "test" not in db_name.lower():
         raise RuntimeError(
             f"Unsafe test database name '{db_name}': test database name must explicitly include 'test' (e.g., 'journeyiq_test')."
         )
+    if settings.sandbox_database_url:
+        parsed_sandbox = make_url(settings.sandbox_database_url)
+        if (
+            (parsed_sandbox.database or "").strip().lower() == db_name.lower()
+            and (parsed_sandbox.host or "") == (parsed_test.host or "")
+            and parsed_sandbox.port == parsed_test.port
+        ):
+            raise RuntimeError(
+                f"Unsafe test database '{db_name}': tests cannot reuse the persistent sandbox database."
+            )
     return test_url
 
 
@@ -748,11 +761,19 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
         assert exc_data["summary_counts"]["anom_002_conflicted_links"] == 8
         assert exc_data["summary_counts"]["anom_003_duplicate_conversions_suppressed"] == 10
         assert exc_data["summary_counts"]["anom_004_bot_sessions_isolated"] == 20
+        assert len(exc_data["bot_sessions"]) == 20
+        assert "resolved_at" in exc_data["quarantined_items"][0]
 
         r_exc_ui = client.get("/exceptions")
         assert r_exc_ui.status_code == 200
         assert "Data Quality &amp; Exceptions" in r_exc_ui.text
         assert "Identity merge blocked" in r_exc_ui.text
+        assert "Identity merge blocked because" in r_exc_ui.text
+        assert "Customer identity could not be verified because conflicting identity evidence was detected." in r_exc_ui.text
+        assert "client identification was missing." in r_exc_ui.text
+        assert "Isolated Bot Sessions (20)" in r_exc_ui.text
+        assert "Headless scraper burst" in r_exc_ui.text
+        assert "Technical Details" in r_exc_ui.text
         assert "ANOM-001" in r_exc_ui.text  # preserved inside Technical Details disclosure
 
         # 7. Experiments API & View
@@ -890,21 +911,39 @@ def test_quarantine_resolution_validation_and_responsive_header(db_session: Sess
     """
     Verify /api/v1/exceptions/quarantine/{id}/resolve and /exceptions/quarantine/{id}/resolve-ui
     validate malformed UUIDs, missing records, and invalid statuses safely on journeyiq_test,
-    and verify base.html renders responsive wrapping header markup.
+    support both Resolve and Dismiss with optional resolution notes (without inventing default notes),
+    preserve raw reasons inside Technical Details, and verify presentation helpers.
     """
+    from app.core.presentation import summarize_quarantine_issue
     from app.models.entities import EventQuarantine
 
     assert_safe_test_session(db_session)
+    assert "structure or required fields were invalid" in summarize_quarantine_issue("MALFORMED_EVENT")
+    assert "conflicting identity evidence" in summarize_quarantine_issue("IDENTITY_CONFLICT")
+    assert "consent was denied" in summarize_quarantine_issue(
+        "UNAUTHORIZED_IDENTITY_MERGE", "consent_status is 'DENIED'"
+    )
+    assert "consent was unavailable" in summarize_quarantine_issue("UNAUTHORIZED_IDENTITY_MERGE", None)
+    assert "Technical Details" in summarize_quarantine_issue("CUSTOM_UNKNOWN_CODE", "Opaque internal msg")
+
     t0 = datetime(2026, 11, 1, 10, 0, 0, tzinfo=timezone.utc)
-    q = EventQuarantine(
+    q1 = EventQuarantine(
         quarantine_id=uuid.uuid4(),
         quarantine_business_id="QUAR-TEST-001",
         issue_type="UNAUTHORIZED_IDENTITY_MERGE",
-        reason="Synthetic quarantine item for resolution validation test",
+        reason="Raw internal reason UNAUTH-001 preserved verbatim",
         detected_at=t0,
         resolution_status="OPEN",
     )
-    db_session.add(q)
+    q2 = EventQuarantine(
+        quarantine_id=uuid.uuid4(),
+        quarantine_business_id="QUAR-TEST-002",
+        issue_type="MISSING_CLIENT_INSTANCE_ID",
+        reason="WEB event 'EVT-MISS-1' is missing required client_instance_id (SES-006).",
+        detected_at=t0 + timedelta(minutes=5),
+        resolution_status="OPEN",
+    )
+    db_session.add_all([q1, q2])
     db_session.commit()
 
     def _override_get_db():
@@ -949,7 +988,7 @@ def test_quarantine_resolution_validation_and_responsive_header(db_session: Sess
 
         # Invalid resolution_status -> 400 on API, 303 error redirect on UI without mutating DB
         r_status_ui = client.post(
-            f"/exceptions/quarantine/{q.quarantine_id}/resolve-ui",
+            f"/exceptions/quarantine/{q1.quarantine_id}/resolve-ui",
             data={"resolution_status": "BOGUS_STATUS", "resolution_notes": "hack"},
             follow_redirects=True,
         )
@@ -957,16 +996,359 @@ def test_quarantine_resolution_validation_and_responsive_header(db_session: Sess
         assert "Invalid resolution_status." in r_status_ui.text
 
         db_session.expire_all()
-        assert db_session.get(EventQuarantine, q.quarantine_id).resolution_status == "OPEN"
+        assert db_session.get(EventQuarantine, q1.quarantine_id).resolution_status == "OPEN"
 
-        # Valid resolution works on UI and verifies responsive header classes render
+        # Resolve q1 without submitting a note -> persists None (no invented default note) & human-readable banner
         r_ok_ui = client.post(
-            f"/exceptions/quarantine/{q.quarantine_id}/resolve-ui",
-            data={"resolution_status": "RESOLVED", "resolution_notes": "Reviewed cleanly"},
+            f"/exceptions/quarantine/{q1.quarantine_id}/resolve-ui",
+            data={"resolution_status": "RESOLVED", "resolution_notes": ""},
             follow_redirects=True,
         )
         assert r_ok_ui.status_code == 200
-        assert "Updated quarantine item to RESOLVED" in r_ok_ui.text
+        assert "Record QUAR-TEST-001 marked as resolved." in r_ok_ui.text
+        assert "Raw internal reason UNAUTH-001 preserved verbatim" in r_ok_ui.text
         assert "flex-wrap" in r_ok_ui.text
+
+        db_session.expire_all()
+        updated_q1 = db_session.get(EventQuarantine, q1.quarantine_id)
+        assert updated_q1.resolution_status == "RESOLVED"
+        assert updated_q1.resolution_notes is None
+        assert updated_q1.resolved_at is not None
+
+        # Dismiss q2 with explicit optional note -> persists custom note, timestamp, and displays both in UI
+        r_dismiss_ui = client.post(
+            f"/exceptions/quarantine/{q2.quarantine_id}/resolve-ui",
+            data={"resolution_status": "DISMISSED", "resolution_notes": "Confirmed benign SDK retry"},
+            follow_redirects=True,
+        )
+        assert r_dismiss_ui.status_code == 200
+        assert "Record QUAR-TEST-002 marked as dismissed." in r_dismiss_ui.text
+        assert "Confirmed benign SDK retry" in r_dismiss_ui.text
+        assert "Reviewed at:" in r_dismiss_ui.text
+
+        db_session.expire_all()
+        updated_q2 = db_session.get(EventQuarantine, q2.quarantine_id)
+        assert updated_q2.resolution_status == "DISMISSED"
+        assert updated_q2.resolution_notes == "Confirmed benign SDK retry"
+        assert updated_q2.resolved_at is not None
     finally:
         app.dependency_overrides.clear()
+
+
+def test_generator_and_validator_cli_safety_before_connection(monkeypatch, tmp_path: Path, db_session: Session) -> None:
+    """
+    Prove that generate_data.main and validate_data.main reject missing, ambiguous, malformed,
+    primary, non-isolated DB configs, missing --confirm-reset, and unsafe live demo output paths
+    BEFORE create_engine or any database connection attempt occurs.
+    """
+    import app.db.session as session_mod
+    import generate_data
+    import validate_data
+
+    def _forbid_engine(*args, **kwargs):
+        raise AssertionError("create_engine must not be called when safety validation fails!")
+
+    monkeypatch.setattr(session_mod, "create_engine", _forbid_engine)
+    monkeypatch.delenv("MISSING_ISOLATED_DB_URL", raising=False)
+    monkeypatch.setenv("PRIMARY_LEAK_DB_URL", settings.database_url)
+    monkeypatch.setenv("SAFE_ISOLATED_DB_URL", TEST_DB_URL)
+
+    safe_out = str(tmp_path / "safe_out")
+    live_out_rel = str(LIVE_DEMO_OUTPUT_DIR / ".." / "output")
+
+    unsafe_gen_cases = [
+        # Missing --confirm-reset
+        ["--database-url", TEST_DB_URL, "--output-dir", safe_out],
+        # Missing DB config
+        ["--confirm-reset", "--output-dir", safe_out],
+        # Missing env var value
+        ["--confirm-reset", "--db-env-var", "MISSING_ISOLATED_DB_URL", "--output-dir", safe_out],
+        # Ambiguous config (both --database-url and --db-env-var)
+        ["--confirm-reset", "--database-url", TEST_DB_URL, "--db-env-var", "SAFE_ISOLATED_DB_URL", "--output-dir", safe_out],
+        # Malformed URL
+        ["--confirm-reset", "--database-url", "postgresql://:bad_port_here/journeyiq_test", "--output-dir", safe_out],
+        # Missing DB name
+        ["--confirm-reset", "--database-url", "postgresql+psycopg://postgres@127.0.0.1:5439", "--output-dir", safe_out],
+        # Primary journeyiq DB directly and via env var
+        ["--confirm-reset", "--database-url", settings.database_url, "--output-dir", safe_out],
+        ["--confirm-reset", "--db-env-var", "PRIMARY_LEAK_DB_URL", "--output-dir", safe_out],
+        # Non-test / non-sandbox DB name
+        ["--confirm-reset", "--database-url", "postgresql+psycopg://postgres@127.0.0.1:5439/production_db", "--output-dir", safe_out],
+        # Missing --output-dir without --no-write-files
+        ["--confirm-reset", "--database-url", TEST_DB_URL],
+        # Live demo output directory (exact and relative variant)
+        ["--confirm-reset", "--database-url", TEST_DB_URL, "--output-dir", str(LIVE_DEMO_OUTPUT_DIR)],
+        ["--confirm-reset", "--database-url", TEST_DB_URL, "--output-dir", live_out_rel],
+    ]
+    for argv in unsafe_gen_cases:
+        with pytest.raises(SystemExit) as exc_info:
+            generate_data.main(argv)
+        assert exc_info.value.code != 0
+
+    unsafe_val_cases = [
+        ["--output-dir", safe_out],
+        ["--db-env-var", "MISSING_ISOLATED_DB_URL", "--output-dir", safe_out],
+        ["--database-url", TEST_DB_URL, "--db-env-var", "SAFE_ISOLATED_DB_URL", "--output-dir", safe_out],
+        ["--database-url", "postgresql://:bad_port_here/journeyiq_test", "--output-dir", safe_out],
+        ["--database-url", "postgresql+psycopg://postgres@127.0.0.1:5439", "--output-dir", safe_out],
+        ["--database-url", settings.database_url, "--output-dir", safe_out],
+        ["--database-url", "postgresql+psycopg://postgres@127.0.0.1:5439/analytics_prod", "--output-dir", safe_out],
+        ["--database-url", TEST_DB_URL],
+        ["--database-url", TEST_DB_URL, "--output-dir", str(LIVE_DEMO_OUTPUT_DIR)],
+    ]
+    for argv in unsafe_val_cases:
+        with pytest.raises(SystemExit) as exc_info:
+            validate_data.main(argv)
+        assert exc_info.value.code != 0
+
+    # Programmatic artifact safety also blocks implicit overwrites before touching DB
+    with pytest.raises(ValueError):
+        generate_dataset(db_session, seed=42, scale="mvp", write_files=True)
+    with pytest.raises(ValueError):
+        generate_dataset(db_session, seed=42, scale="mvp", write_files=True, output_dir=LIVE_DEMO_OUTPUT_DIR)
+    with pytest.raises(ValueError):
+        validate_database(db_session, write_report=True)
+    with pytest.raises(ValueError):
+        validate_database(db_session, write_report=True, output_dir=LIVE_DEMO_OUTPUT_DIR)
+
+
+@pytest.fixture()
+def disposable_cli_db_url() -> str:
+    """Create and tear down an isolated temporary database strictly for CLI subprocess execution tests."""
+    import re
+
+    db_name = f"journeyiq_cli_test_{uuid.uuid4().hex[:8]}"
+    assert re.fullmatch(r"journeyiq_cli_test_[0-9a-f]{8}", db_name)
+    disposable_url = make_url(TEST_DB_URL).set(database=db_name).render_as_string(hide_password=False)
+    assert_safe_test_database_url(disposable_url, settings.database_url)
+
+    admin_url = make_url(TEST_DB_URL).set(database="postgres")
+    admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
+    created_by_fixture = False
+    try:
+        with admin_engine.connect() as conn:
+            exists = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :db_name"),
+                {"db_name": db_name},
+            ).scalar()
+            if exists:
+                raise RuntimeError(f"Disposable CLI test database '{db_name}' already exists.")
+            conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+            created_by_fixture = True
+        yield disposable_url
+    finally:
+        if created_by_fixture:
+            with admin_engine.connect() as conn:
+                conn.execute(
+                    text(
+                        "SELECT pg_terminate_backend(pid) "
+                        "FROM pg_stat_activity "
+                        "WHERE datname = :db_name AND pid <> pg_backend_pid()"
+                    ),
+                    {"db_name": db_name},
+                )
+                conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}"'))
+        admin_engine.dispose()
+
+
+def test_generator_and_validator_cli_isolated_execution(
+    disposable_cli_db_url: str,
+    tmp_path: Path,
+) -> None:
+    """
+    Verify valid isolated CLI subprocess execution against a dedicated disposable database
+    (journeyiq_cli_test_<hex>), leaving both journeyiq and journeyiq_test untouched, along with
+    custom --output-dir artifact generation/validation formats, --as-of support, and programmatic compatibility.
+    """
+    import json
+    import os
+    import subprocess
+
+    assert make_url(disposable_cli_db_url).database != make_url(TEST_DB_URL).database
+    assert make_url(disposable_cli_db_url).database != (make_url(settings.database_url).database or "journeyiq")
+
+    gen_out = tmp_path / "gen_artifacts"
+    val_out = tmp_path / "val_artifacts"
+    cli_env = os.environ.copy()
+    cli_env["ISOLATED_GEN_TEST_URL"] = disposable_cli_db_url
+
+    gen_proc = subprocess.run(
+        [
+            sys.executable,
+            str(DATA_GEN_DIR / "generate_data.py"),
+            "--db-env-var",
+            "ISOLATED_GEN_TEST_URL",
+            "--output-dir",
+            str(gen_out),
+            "--seed",
+            "42",
+            "--scale",
+            "mvp",
+            "--as-of",
+            "2026-11-10T00:00:00Z",
+            "--confirm-reset",
+        ],
+        cwd=str(ROOT_DIR),
+        env=cli_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert gen_proc.returncode == 0, gen_proc.stderr
+    gen_stdout = json.loads(gen_proc.stdout)
+    assert gen_stdout["seed"] == 42
+    assert gen_stdout["scale"] == "mvp"
+    assert gen_stdout["counts"]["sessions"] == 149
+    assert gen_stdout["counts"]["events"] == 510
+
+    manifest_file = gen_out / "generation_manifest.json"
+    gt_file = gen_out / "ground_truth_anomalies.json"
+    assert manifest_file.exists()
+    assert gt_file.exists()
+    assert json.loads(manifest_file.read_text(encoding="utf-8"))["dataset_sha256"] == gen_stdout["dataset_sha256"]
+
+    # Non-destructive validation CLI subprocess does not require --confirm-reset
+    val_proc = subprocess.run(
+        [
+            sys.executable,
+            str(DATA_VAL_DIR / "validate_data.py"),
+            "--database-url",
+            disposable_cli_db_url,
+            "--output-dir",
+            str(val_out),
+        ],
+        cwd=str(ROOT_DIR),
+        env=cli_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert val_proc.returncode == 0, val_proc.stderr
+    val_stdout = json.loads(val_proc.stdout)
+    assert val_stdout["overall_status"] == "PASSED"
+    assert val_stdout["total_checks"] == 7
+    val_file = val_out / "validation_report.json"
+    assert val_file.exists()
+    assert json.loads(val_file.read_text(encoding="utf-8"))["overall_status"] == "PASSED"
+
+    # Programmatic calls with isolated explicit output_dir also run strictly on the disposable DB
+    cli_engine = create_engine(disposable_cli_db_url, pool_pre_ping=True, future=True)
+    cli_session_local = sessionmaker(bind=cli_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    try:
+        with cli_session_local() as db:
+            assert_safe_test_session(db)
+            prog_out = tmp_path / "prog_artifacts"
+            m_prog = generate_dataset(db, seed=42, scale="mvp", write_files=True, output_dir=prog_out)
+            r_prog = validate_database(db, write_report=True, output_dir=prog_out)
+            assert m_prog["dataset_sha256"] == gen_stdout["dataset_sha256"]
+            assert r_prog["overall_status"] == "PASSED"
+            assert (prog_out / "generation_manifest.json").exists()
+            assert (prog_out / "ground_truth_anomalies.json").exists()
+            assert (prog_out / "validation_report.json").exists()
+    finally:
+        cli_engine.dispose()
+
+
+def test_full_scale_bulk_pipeline_determinism_and_sql_validator(
+    disposable_cli_db_url: str,
+    tmp_path: Path,
+) -> None:
+    """
+    Verify scaled bulk generation (`scale="full"`), streaming SHA-256 determinism across chunked runs,
+    CSV export, and set-based SQL validation (`DATA-001`..`DATA-006`, `ANOM-001-004`) on an isolated DB.
+    """
+    import json
+
+    full_engine = create_engine(disposable_cli_db_url, pool_pre_ping=True, future=True)
+    full_session_local = sessionmaker(bind=full_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    try:
+        out_one = tmp_path / "full_run_one"
+        out_two = tmp_path / "full_run_two"
+        with full_session_local() as db:
+            assert_safe_test_session(db)
+            manifest_one = generate_dataset(
+                db,
+                seed=42,
+                scale="full",
+                write_files=True,
+                output_dir=out_one,
+                export_csv=True,
+                full_journeys=220,
+                full_chunk_size=75,
+            )
+            report_one = validate_database(db, write_report=True, output_dir=out_one)
+
+        with full_session_local() as db:
+            assert_safe_test_session(db)
+            manifest_two = generate_dataset(
+                db,
+                seed=42,
+                scale="full",
+                write_files=True,
+                output_dir=out_two,
+                export_csv=False,
+                full_journeys=220,
+                full_chunk_size=75,
+            )
+
+        assert manifest_one["scale"] == "full"
+        assert manifest_one["dataset_sha256"] == manifest_two["dataset_sha256"]
+        assert manifest_one["counts"] == manifest_two["counts"]
+        assert manifest_one["counts"]["journeys"] == 221
+        assert manifest_one["counts"]["sessions"] > manifest_one["counts"]["journeys"]
+        assert manifest_one["counts"]["events"] > manifest_one["counts"]["journeys"] * 18
+
+        assert report_one["overall_status"] == "PASSED"
+        assert len(report_one["checks"]) == 7
+        assert all(check["passed"] for check in report_one["checks"])
+
+        gt = json.loads((out_one / "ground_truth_anomalies.json").read_text(encoding="utf-8"))
+        assert len(gt["anom_001_late_events"]) >= 1
+        assert len(gt["anom_002_identity_conflicts"]) >= 1
+        assert len(gt["anom_002_unauthorized_merges"]) >= 1
+        assert len(gt["anom_003_duplicate_purchase_signals"]) >= 1
+        assert len(gt["anom_004_bot_sessions"]) >= 1
+
+        csv_dir = out_one / "csv"
+        assert (csv_dir / "journey_event.csv").exists()
+        assert (csv_dir / "session.csv").exists()
+        assert (csv_dir / "orders.csv").exists()
+    finally:
+        full_engine.dispose()
+
+
+def test_runtime_database_target_selection_and_isolation() -> None:
+    """Verify explicit primary vs. sandbox runtime DB selection, test/sandbox isolation, and credential redaction."""
+    primary_url = "postgresql+psycopg://postgres:secret_pw@127.0.0.1:5439/journeyiq"
+    sandbox_url = "postgresql+psycopg://postgres:secret_sbx@127.0.0.1:5432/journeyiq_sandbox"
+
+    assert resolve_runtime_database_url("primary", primary_url=primary_url, sandbox_url=sandbox_url) == (
+        "primary",
+        primary_url,
+    )
+    assert resolve_runtime_database_url("sandbox", primary_url=primary_url, sandbox_url=sandbox_url) == (
+        "sandbox",
+        sandbox_url,
+    )
+
+    with pytest.raises(ValueError):
+        resolve_runtime_database_url("sandbox", primary_url=primary_url, sandbox_url="")
+    with pytest.raises(ValueError):
+        resolve_runtime_database_url("sandbox", primary_url=primary_url, sandbox_url=primary_url)
+    with pytest.raises(ValueError):
+        resolve_runtime_database_url("unknown_target", primary_url=primary_url, sandbox_url=sandbox_url)
+
+    # Pytest destructive guard must reject primary DB and sandbox DB
+    with pytest.raises(RuntimeError):
+        assert_safe_test_database_url(primary_url, primary_url)
+    with pytest.raises(RuntimeError):
+        assert_safe_test_database_url(sandbox_url, primary_url)
+    if settings.sandbox_database_url:
+        with pytest.raises(RuntimeError):
+            assert_safe_test_database_url(settings.sandbox_database_url, settings.database_url)
+
+    redacted = get_runtime_database_info(sandbox_url, target="sandbox")
+    assert redacted["target"] == "sandbox"
+    assert redacted["database"] == "journeyiq_sandbox"
+    assert "secret_sbx" not in redacted["url_redacted"]
+    assert "secret_sbx" not in repr(redacted)

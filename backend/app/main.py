@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,8 +16,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.presentation import register_presentation_filters
-from app.db.session import get_db
+from app.core.presentation import (
+    STATUS_LABELS,
+    humanize_code,
+    register_presentation_filters,
+)
+from app.db.session import get_db, get_runtime_database_info
 from app.models.entities import CustomerJourney, EventQuarantine
 from app.services.analytics_service import (
     get_dashboard_metrics,
@@ -27,14 +33,32 @@ from app.services.analytics_service import (
 )
 from app.services.domain_service import calculate_journey_outcome, withdraw_consent
 
+logger = logging.getLogger("uvicorn.error")
+
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 register_presentation_filters(templates.env)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    db_info = get_runtime_database_info()
+    logger.info(
+        "JourneyIQ runtime database target=%s host=%s port=%s database=%s url=%s",
+        db_info["target"],
+        db_info["host"],
+        db_info["port"],
+        db_info["database"],
+        db_info["url_redacted"],
+    )
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     description="JourneyIQ Customer Journey & Conversion Analytics Platform",
+    lifespan=lifespan,
 )
 
 
@@ -54,10 +78,13 @@ class QuarantineResolveRequest(BaseModel):
 
 @app.get("/api/v1/health")
 def api_health(db: Session = Depends(get_db)) -> dict[str, Any]:
-    db.execute(text("SELECT 1"))
+    active_db = db.execute(text("SELECT current_database()")).scalar_one()
+    db_info = get_runtime_database_info()
     return {
         "status": "healthy",
         "service": settings.app_name,
+        "runtime_target": db_info["target"],
+        "database": str(active_db),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -224,7 +251,7 @@ def _resolve_quarantine_record(
     *,
     quarantine_id: str,
     resolution_status: str,
-    resolution_notes: str,
+    resolution_notes: str | None,
 ) -> EventQuarantine:
     """Validate identifier and target resolution status before updating EventQuarantine."""
     try:
@@ -290,7 +317,7 @@ def view_dashboard(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     metrics = get_dashboard_metrics(db, exclude_bots=exclude_bots)
-    funnel = get_funnel_metrics(db, exclude_bots=exclude_bots)
+    funnel = get_funnel_metrics(db, exclude_bots=exclude_bots, dashboard_metrics=metrics)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -485,18 +512,20 @@ def view_exceptions(
 def ui_resolve_quarantine(
     quarantine_id: str,
     resolution_status: str = Form("RESOLVED"),
-    resolution_notes: str = Form("Verified and resolved during data quality review."),
+    resolution_notes: str | None = Form(None),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
+    cleaned_notes = resolution_notes.strip() if resolution_notes and resolution_notes.strip() else None
     try:
-        _resolve_quarantine_record(
+        q = _resolve_quarantine_record(
             db,
             quarantine_id=quarantine_id,
             resolution_status=resolution_status,
-            resolution_notes=resolution_notes,
+            resolution_notes=cleaned_notes,
         )
+        status_label = humanize_code(q.resolution_status, STATUS_LABELS).lower()
         params = {
-            "banner_msg": f"Updated quarantine item to {resolution_status}",
+            "banner_msg": f"Record {q.quarantine_business_id} marked as {status_label}.",
             "banner_type": "success",
         }
     except HTTPException as exc:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from decimal import Decimal
@@ -11,35 +12,48 @@ BACKEND_DIR = ROOT_DIR / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from sqlalchemy import select
+from sqlalchemy import Numeric, and_, case, cast, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.core.config import resolve_safe_output_dir
+from app.db.session import (
+    create_isolated_session_factory,
+    resolve_isolated_database_url,
+)
 from app.models.entities import (
     AuditEvent,
-    Cart,
-    CartItem,
-    ConsentRecord,
     Customer,
-    CustomerJourney,
     EventQuarantine,
     Experiment,
     ExperimentVariant,
     IdentityLink,
     JourneyEvent,
-    JourneyOutcome,
     Order,
     OrderItem,
     PaymentAttempt,
     SessionRecord,
-    SupportTicket,
 )
 
 
-def validate_database(db: Session, *, write_report: bool = True) -> dict[str, Any]:
+def validate_database(
+    db: Session,
+    *,
+    write_report: bool = True,
+    output_dir: str | Path | None = None,
+    allow_live_demo_overwrite: bool = False,
+) -> dict[str, Any]:
     """
-    Validate generated dataset integrity against DATA-001 through DATA-010 and ANOM-001 through ANOM-004.
+    Validate generated dataset integrity against DATA-001 through DATA-010 and ANOM-001 through ANOM-004
+    using set-based SQL aggregate checks so 2M+ event datasets validate with bounded memory.
     """
+    target_out_dir = (
+        resolve_safe_output_dir(
+            output_dir,
+            allow_live_demo_overwrite=allow_live_demo_overwrite,
+        )
+        if write_report
+        else None
+    )
     checks: list[dict[str, Any]] = []
 
     def record_check(code: str, description: str, passed: bool, details: Any = None) -> None:
@@ -53,45 +67,64 @@ def validate_database(db: Session, *, write_report: bool = True) -> dict[str, An
         )
 
     # 1. DATA-001: Primary key & business ID uniqueness
-    events = list(db.scalars(select(JourneyEvent)).all())
-    evt_biz_ids = [e.event_business_id for e in events]
+    total_events_raw, unique_biz_ids_raw = db.execute(
+        select(
+            func.count(JourneyEvent.event_id),
+            func.count(func.distinct(JourneyEvent.event_business_id)),
+        )
+    ).one()
+    total_events = int(total_events_raw or 0)
+    unique_business_ids = int(unique_biz_ids_raw or 0)
     record_check(
         "DATA-001",
         "Primary keys and business IDs are unique across entities",
-        len(events) > 0 and len(evt_biz_ids) == len(set(evt_biz_ids)),
-        {"total_events": len(events), "unique_business_ids": len(set(evt_biz_ids))},
+        total_events > 0 and total_events == unique_business_ids,
+        {"total_events": total_events, "unique_business_ids": unique_business_ids},
     )
 
-    # 2. DATA-002: Referential integrity across sessions, customers, orders, and tickets
-    sessions = list(db.scalars(select(SessionRecord)).all())
-    session_ids = {s.session_id for s in sessions}
-    customer_ids = {c.customer_id for c in db.scalars(select(Customer)).all()}
-    orphan_session_events = [
-        e.event_business_id
-        for e in events
-        if e.session_id is not None and e.session_id not in session_ids
-    ]
-    orphan_cust_sessions = [
-        s.session_business_id
-        for s in sessions
-        if s.customer_id is not None and s.customer_id not in customer_ids
-    ]
+    # 2. DATA-002: Referential integrity across sessions and customers
+    orphan_session_events = int(
+        db.scalar(
+            select(func.count(JourneyEvent.event_id))
+            .outerjoin(SessionRecord, JourneyEvent.session_id == SessionRecord.session_id)
+            .where(JourneyEvent.session_id.is_not(None), SessionRecord.session_id.is_(None))
+        )
+        or 0
+    )
+    orphan_cust_sessions = int(
+        db.scalar(
+            select(func.count(SessionRecord.session_id))
+            .outerjoin(Customer, SessionRecord.customer_id == Customer.customer_id)
+            .where(SessionRecord.customer_id.is_not(None), Customer.customer_id.is_(None))
+        )
+        or 0
+    )
     record_check(
         "DATA-002",
         "Foreign keys reference valid parent records",
-        len(orphan_session_events) == 0 and len(orphan_cust_sessions) == 0,
+        orphan_session_events == 0 and orphan_cust_sessions == 0,
         {
-            "orphan_session_events": len(orphan_session_events),
-            "orphan_customer_sessions": len(orphan_cust_sessions),
+            "orphan_session_events": orphan_session_events,
+            "orphan_customer_sessions": orphan_cust_sessions,
         },
     )
 
     # 3. DATA-003: Session started_at <= last_event_at <= ended_at
-    invalid_session_ts = [
-        s.session_business_id
-        for s in sessions
-        if not (s.started_at <= s.last_event_at and (s.ended_at is None or s.last_event_at <= s.ended_at))
-    ]
+    invalid_session_ts = list(
+        db.scalars(
+            select(SessionRecord.session_business_id)
+            .where(
+                or_(
+                    SessionRecord.started_at > SessionRecord.last_event_at,
+                    and_(
+                        SessionRecord.ended_at.is_not(None),
+                        SessionRecord.last_event_at > SessionRecord.ended_at,
+                    ),
+                )
+            )
+            .limit(100)
+        ).all()
+    )
     record_check(
         "DATA-003",
         "Session timestamps satisfy started_at <= last_event_at <= ended_at",
@@ -100,40 +133,71 @@ def validate_database(db: Session, *, write_report: bool = True) -> dict[str, An
     )
 
     # 4. DATA-004: Order financial arithmetic (subtotal, line_total, total_amount)
-    orders = list(db.scalars(select(Order)).all())
-    order_items = list(db.scalars(select(OrderItem)).all())
-    items_by_order: dict[Any, list[OrderItem]] = {}
-    for oi in order_items:
-        items_by_order.setdefault(oi.order_id, []).append(oi)
-
     financial_errors: list[str] = []
-    for o in orders:
-        ois = items_by_order.get(o.order_id, [])
-        for oi in ois:
-            if (Decimal(oi.quantity) * oi.unit_price).quantize(Decimal("0.01")) != oi.line_total:
-                financial_errors.append(f"OrderItem {oi.order_item_business_id} line_total mismatch")
-        calc_sub = sum((oi.line_total for oi in ois), Decimal("0.00")).quantize(Decimal("0.01"))
-        if calc_sub != o.subtotal:
-            financial_errors.append(f"Order {o.order_business_id} subtotal mismatch ({calc_sub} != {o.subtotal})")
-        calc_tot = (o.subtotal - o.discount_amount + o.tax_amount + o.shipping_amount).quantize(Decimal("0.01"))
-        if calc_tot != o.total_amount:
-            financial_errors.append(f"Order {o.order_business_id} total_amount mismatch ({calc_tot} != {o.total_amount})")
+    bad_items = list(
+        db.scalars(
+            select(OrderItem.order_item_business_id)
+            .where(
+                func.round(cast(OrderItem.quantity, Numeric(12, 2)) * OrderItem.unit_price, 2)
+                != OrderItem.line_total
+            )
+            .limit(50)
+        ).all()
+    )
+    for item_biz_id in bad_items:
+        financial_errors.append(f"OrderItem {item_biz_id} line_total mismatch")
 
+    oi_subq = (
+        select(
+            OrderItem.order_id.label("order_id"),
+            func.coalesce(func.sum(OrderItem.line_total), Decimal("0.00")).label("calc_sub"),
+        )
+        .group_by(OrderItem.order_id)
+        .subquery()
+    )
+    sub_col = func.round(func.coalesce(oi_subq.c.calc_sub, Decimal("0.00")), 2)
+    tot_col = func.round(
+        Order.subtotal - Order.discount_amount + Order.tax_amount + Order.shipping_amount,
+        2,
+    )
+    bad_orders = db.execute(
+        select(
+            Order.order_business_id,
+            Order.subtotal,
+            sub_col.label("calc_sub"),
+            Order.total_amount,
+            tot_col.label("calc_tot"),
+        )
+        .outerjoin(oi_subq, Order.order_id == oi_subq.c.order_id)
+        .where(or_(sub_col != Order.subtotal, tot_col != Order.total_amount))
+        .limit(50)
+    ).all()
+    for obiz, o_sub, calc_sub, o_tot, calc_tot in bad_orders:
+        if Decimal(str(calc_sub)).quantize(Decimal("0.01")) != o_sub:
+            financial_errors.append(f"Order {obiz} subtotal mismatch ({calc_sub} != {o_sub})")
+        if Decimal(str(calc_tot)).quantize(Decimal("0.01")) != o_tot:
+            financial_errors.append(f"Order {obiz} total_amount mismatch ({calc_tot} != {o_tot})")
+
+    orders_checked = int(db.scalar(select(func.count(Order.order_id))) or 0)
     record_check(
         "DATA-004",
         "Order and OrderItem financial totals satisfy exact decimal arithmetic",
         len(financial_errors) == 0,
-        {"orders_checked": len(orders), "errors": financial_errors},
+        {"orders_checked": orders_checked, "errors": financial_errors},
     )
 
     # 5. DATA-005: Confirmed orders have at least one SUCCEEDED payment attempt
-    payment_attempts = list(db.scalars(select(PaymentAttempt)).all())
-    succeeded_order_ids = {pa.order_id for pa in payment_attempts if pa.status == "SUCCEEDED"}
-    confirmed_without_payment = [
-        o.order_business_id
-        for o in orders
-        if o.status == "CONFIRMED" and o.order_id not in succeeded_order_ids
-    ]
+    succeeded_exists = exists().where(
+        PaymentAttempt.order_id == Order.order_id,
+        PaymentAttempt.status == "SUCCEEDED",
+    )
+    confirmed_without_payment = list(
+        db.scalars(
+            select(Order.order_business_id)
+            .where(Order.status == "CONFIRMED", ~succeeded_exists)
+            .limit(100)
+        ).all()
+    )
     record_check(
         "DATA-005",
         "Every CONFIRMED order has a corresponding SUCCEEDED PaymentAttempt",
@@ -142,49 +206,76 @@ def validate_database(db: Session, *, write_report: bool = True) -> dict[str, An
     )
 
     # 6. DATA-006: Experiment variant allocations sum to 100.00% with 1 control
-    experiments = list(db.scalars(select(Experiment)).all())
-    variants = list(db.scalars(select(ExperimentVariant)).all())
+    exp_rows = db.execute(
+        select(
+            Experiment.experiment_business_id,
+            func.coalesce(func.sum(ExperimentVariant.allocation_percentage), Decimal("0.00")).label("total_pct"),
+            func.coalesce(
+                func.sum(case((ExperimentVariant.is_control.is_(True), 1), else_=0)),
+                0,
+            ).label("ctrl_cnt"),
+        )
+        .outerjoin(ExperimentVariant, Experiment.experiment_id == ExperimentVariant.experiment_id)
+        .group_by(Experiment.experiment_id, Experiment.experiment_business_id)
+    ).all()
     exp_errors: list[str] = []
-    for exp in experiments:
-        evs = [v for v in variants if v.experiment_id == exp.experiment_id]
-        total_pct = sum((v.allocation_percentage for v in evs), Decimal("0.00")).quantize(Decimal("0.01"))
-        ctrl_cnt = sum(1 for v in evs if v.is_control)
+    for exp_biz_id, total_pct_raw, ctrl_cnt_raw in exp_rows:
+        total_pct = Decimal(str(total_pct_raw)).quantize(Decimal("0.01"))
+        ctrl_cnt = int(ctrl_cnt_raw or 0)
         if total_pct != Decimal("100.00") or ctrl_cnt != 1:
-            exp_errors.append(f"{exp.experiment_business_id}: total={total_pct}%, controls={ctrl_cnt}")
+            exp_errors.append(f"{exp_biz_id}: total={total_pct}%, controls={ctrl_cnt}")
     record_check(
         "DATA-006",
         "Experiments have >=2 variants, 1 control, and 100.00% allocation sum",
         len(exp_errors) == 0,
-        {"experiments_checked": len(experiments), "errors": exp_errors},
+        {"experiments_checked": len(exp_rows), "errors": exp_errors},
     )
 
     # 7. ANOM-001 through ANOM-004 presence & isolation
-    quarantines = list(db.scalars(select(EventQuarantine)).all())
-    late_events = [e for e in events if (e.properties or {}).get("late_arrival_detected")]
-    conflicted_links = list(
-        db.scalars(select(IdentityLink).where(IdentityLink.status == "CONFLICTED")).all()
+    quarantines_cnt = int(db.scalar(select(func.count(EventQuarantine.quarantine_id))) or 0)
+    late_events_cnt = int(
+        db.scalar(
+            select(func.count(JourneyEvent.event_id)).where(
+                JourneyEvent.properties["late_arrival_detected"].as_boolean().is_(True)
+            )
+        )
+        or 0
     )
-    dup_audits = list(
-        db.scalars(
-            select(AuditEvent).where(AuditEvent.action == "DUPLICATE_CONVERSION_SIGNAL_SUPPRESSED")
-        ).all()
+    conflicted_links_cnt = int(
+        db.scalar(
+            select(func.count(IdentityLink.identity_link_id)).where(IdentityLink.status == "CONFLICTED")
+        )
+        or 0
     )
-    bot_sessions = [s for s in sessions if s.traffic_classification == "BOT"]
+    dup_audits_cnt = int(
+        db.scalar(
+            select(func.count(AuditEvent.audit_event_id)).where(
+                AuditEvent.action == "DUPLICATE_CONVERSION_SIGNAL_SUPPRESSED"
+            )
+        )
+        or 0
+    )
+    bot_sessions_cnt = int(
+        db.scalar(
+            select(func.count(SessionRecord.session_id)).where(SessionRecord.traffic_classification == "BOT")
+        )
+        or 0
+    )
 
     record_check(
         "ANOM-001-004",
         "All 4 mandatory anomalies are present, detected, and properly isolated",
-        len(late_events) > 0
-        and len(conflicted_links) > 0
-        and len(dup_audits) > 0
-        and len(bot_sessions) > 0
-        and len(quarantines) > 0,
+        late_events_cnt > 0
+        and conflicted_links_cnt > 0
+        and dup_audits_cnt > 0
+        and bot_sessions_cnt > 0
+        and quarantines_cnt > 0,
         {
-            "anom_001_late_events": len(late_events),
-            "anom_002_conflicted_links": len(conflicted_links),
-            "anom_003_duplicate_signals_suppressed": len(dup_audits),
-            "anom_004_bot_sessions": len(bot_sessions),
-            "quarantined_records": len(quarantines),
+            "anom_001_late_events": late_events_cnt,
+            "anom_002_conflicted_links": conflicted_links_cnt,
+            "anom_003_duplicate_signals_suppressed": dup_audits_cnt,
+            "anom_004_bot_sessions": bot_sessions_cnt,
+            "quarantined_records": quarantines_cnt,
         },
     )
 
@@ -197,19 +288,84 @@ def validate_database(db: Session, *, write_report: bool = True) -> dict[str, An
         "checks": checks,
     }
 
-    if write_report:
-        out_dir = ROOT_DIR / "data-generation" / "output"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "validation_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if write_report and target_out_dir is not None:
+        target_out_dir.mkdir(parents=True, exist_ok=True)
+        (target_out_dir / "validation_report.json").write_text(
+            json.dumps(report, indent=2), encoding="utf-8"
+        )
     return report
 
 
-def main() -> None:
-    with SessionLocal() as db:
-        report = validate_database(db)
-        print(json.dumps(report, indent=2))
-        if report["overall_status"] != "PASSED":
-            sys.exit(1)
+def build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="JourneyIQ Synthetic Dataset Validator")
+    parser.add_argument(
+        "--database-url",
+        type=str,
+        default=None,
+        help="Explicit SQLAlchemy database URL for an isolated test/sandbox database",
+    )
+    parser.add_argument(
+        "--db-env-var",
+        type=str,
+        default=None,
+        help="Environment variable name holding an isolated test/sandbox database URL (e.g. TEST_DATABASE_URL)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Target directory for validation_report.json",
+    )
+    parser.add_argument(
+        "--no-write-report",
+        action="store_true",
+        help="Skip writing validation_report.json",
+    )
+    parser.add_argument(
+        "--allow-live-demo-artifacts",
+        action="store_true",
+        help="Explicit opt-in required only when updating live demo artifacts under data-generation/output",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_cli_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        target_db_url = resolve_isolated_database_url(
+            database_url=args.database_url,
+            db_env_var=args.db_env_var,
+        )
+        write_report = not args.no_write_report
+        out_dir = (
+            resolve_safe_output_dir(
+                args.output_dir,
+                allow_live_demo_overwrite=args.allow_live_demo_artifacts,
+            )
+            if write_report
+            else None
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    session_factory = create_isolated_session_factory(target_db_url)
+    try:
+        with session_factory() as db:
+            report = validate_database(
+                db,
+                write_report=write_report,
+                output_dir=out_dir,
+                allow_live_demo_overwrite=args.allow_live_demo_artifacts,
+            )
+            print(json.dumps(report, indent=2))
+            if report["overall_status"] != "PASSED":
+                sys.exit(1)
+    finally:
+        bind = session_factory.kw.get("bind")
+        if bind is not None:
+            bind.dispose()
 
 
 if __name__ == "__main__":

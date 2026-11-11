@@ -18,6 +18,9 @@ venv/
 # Generated datasets
 data-generation/output/*
 !data-generation/output/.gitkeep
+data-generation/sandbox-output/
+data-generation/sandbox-archive/
+*.csv
 .pgdata/
 
 # Frontend

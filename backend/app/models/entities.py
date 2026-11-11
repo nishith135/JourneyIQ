@@ -165,6 +165,8 @@ class Cart(Base):
             name="ck_cart_status",
         ),
         Index("ix_cart_status_updated", "status", "updated_at"),
+        Index("ix_cart_session_id", "session_id"),
+        Index("ix_cart_customer_id", "customer_id"),
     )
 
 
@@ -187,6 +189,7 @@ class CartItem(Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_cart_item_quantity_pos"),
         CheckConstraint("unit_price >= 0", name="ck_cart_item_unit_price_nonneg"),
+        Index("ix_cart_item_cart_id", "cart_id"),
     )
 
 
@@ -234,6 +237,9 @@ class Order(Base):
             postgresql_where=text("purchase_source IS NOT NULL AND source_purchase_reference IS NOT NULL"),
         ),
         Index("ix_orders_status_created", "status", "created_at"),
+        Index("ix_orders_customer_id", "customer_id"),
+        Index("ix_orders_session_id", "session_id"),
+        Index("ix_orders_cart_id", "cart_id"),
     )
 
 
@@ -255,6 +261,7 @@ class OrderItem(Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_order_item_quantity_pos"),
         CheckConstraint("unit_price >= 0 AND line_total >= 0", name="ck_order_item_amounts_nonneg"),
+        Index("ix_order_item_order_id", "order_id"),
     )
 
 
@@ -351,6 +358,8 @@ class SupportTicket(Base):
             name="ck_support_ticket_status",
         ),
         Index("ix_support_ticket_status_created", "status", "created_at"),
+        Index("ix_support_ticket_journey_id", "journey_id"),
+        Index("ix_support_ticket_session_id", "session_id"),
     )
 
 
@@ -618,6 +627,7 @@ class EventQuarantine(Base):
             name="ck_event_quarantine_resolution_status",
         ),
         Index("ix_event_quarantine_status_detected", "resolution_status", "detected_at"),
+        Index("ix_event_quarantine_event_id", "event_id"),
     )
 
 
@@ -661,6 +671,8 @@ class JourneyOutcome(Base):
             name="ck_journey_outcome_attribution",
         ),
         Index("ix_journey_outcome_scope_status", "scope_type", "outcome_status"),
+        Index("ix_journey_outcome_journey_id", "journey_id"),
+        Index("ix_journey_outcome_session_id", "session_id"),
     )
 
 

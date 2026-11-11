@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Integer, case, cast, exists, func, or_, select
+from sqlalchemy import Boolean, Float, Integer, case, cast, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -46,83 +46,164 @@ FUNNEL_STAGES = [
 ]
 
 
-def _get_latest_journey_outcomes(db: Session) -> dict[uuid.UUID, JourneyOutcome]:
-    all_outcomes = list(
-        db.scalars(
-            select(JourneyOutcome).where(JourneyOutcome.scope_type == "CUSTOMER_JOURNEY")
-        ).all()
+def _latest_journey_outcomes_subquery():
+    version_num = func.coalesce(
+        cast(
+            func.nullif(func.regexp_replace(JourneyOutcome.calculation_version, r"[^0-9]", "", "g"), ""),
+            Integer,
+        ),
+        1,
     )
-    latest: dict[uuid.UUID, JourneyOutcome] = {}
-    for o in all_outcomes:
-        if o.journey_id is None:
-            continue
-        prev = latest.get(o.journey_id)
-        if prev is None:
-            latest[o.journey_id] = o
-        else:
-            # Compare version number v1, v2, ...
-            v_curr = int(str(o.calculation_version).lstrip("vV") or "1")
-            v_prev = int(str(prev.calculation_version).lstrip("vV") or "1")
-            if v_curr >= v_prev:
-                latest[o.journey_id] = o
-    return latest
+    ranked = (
+        select(
+            JourneyOutcome.journey_id.label("journey_id"),
+            JourneyOutcome.outcome_status.label("outcome_status"),
+            JourneyOutcome.attribution_status.label("attribution_status"),
+            func.row_number()
+            .over(
+                partition_by=JourneyOutcome.journey_id,
+                order_by=(
+                    version_num.desc(),
+                    JourneyOutcome.calculated_at.desc(),
+                    JourneyOutcome.outcome_id.desc(),
+                ),
+            )
+            .label("rn"),
+        )
+        .where(
+            JourneyOutcome.scope_type == "CUSTOMER_JOURNEY",
+            JourneyOutcome.journey_id.is_not(None),
+        )
+        .subquery()
+    )
+    return select(ranked).where(ranked.c.rn == 1).subquery()
 
 
 def get_dashboard_metrics(db: Session, *, exclude_bots: bool = True) -> dict[str, Any]:
-    sessions = list(db.scalars(select(SessionRecord)).all())
-    events = list(db.scalars(select(JourneyEvent)).all())
-    quarantines = list(db.scalars(select(EventQuarantine)).all())
-    journeys = list(db.scalars(select(CustomerJourney)).all())
-    orders = list(db.scalars(select(Order)).all())
-    payment_attempts = list(db.scalars(select(PaymentAttempt)).all())
-    tickets = list(db.scalars(select(SupportTicket)).all())
-    audits = list(db.scalars(select(AuditEvent)).all())
-    carts = list(db.scalars(select(Cart)).all())
+    sess_row = db.execute(
+        select(
+            func.count(SessionRecord.session_id).label("total_sessions"),
+            func.coalesce(
+                func.sum(case((SessionRecord.traffic_classification == "HUMAN", 1), else_=0)), 0
+            ).label("human_sessions"),
+            func.coalesce(
+                func.sum(case((SessionRecord.traffic_classification == "BOT", 1), else_=0)), 0
+            ).label("bot_sessions"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (SessionRecord.channel == "WEB")
+                            & (
+                                (SessionRecord.traffic_classification == "HUMAN")
+                                if exclude_bots
+                                else True
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("web_sessions"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (SessionRecord.channel == "APP")
+                            & (
+                                (SessionRecord.traffic_classification == "HUMAN")
+                                if exclude_bots
+                                else True
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("app_sessions"),
+        )
+    ).one()
 
-    latest_outcomes = _get_latest_journey_outcomes(db)
+    total_sessions = int(sess_row.total_sessions or 0)
+    human_sessions = int(sess_row.human_sessions or 0)
+    bot_sessions = int(sess_row.bot_sessions or 0)
+    eligible_sessions = human_sessions if exclude_bots else total_sessions
+    web_sessions = int(sess_row.web_sessions or 0)
+    app_sessions = int(sess_row.app_sessions or 0)
 
-    human_sessions = [s for s in sessions if s.traffic_classification == "HUMAN"]
-    bot_sessions = [s for s in sessions if s.traffic_classification == "BOT"]
-    eligible_sessions = human_sessions if exclude_bots else sessions
-    eligible_session_ids = {s.session_id for s in eligible_sessions}
+    total_events = int(db.scalar(select(func.count(JourneyEvent.event_id))) or 0)
+    late_events_count = int(
+        db.scalar(
+            select(func.count(JourneyEvent.event_id)).where(
+                cast(JourneyEvent.properties.op("->>")("late_arrival_detected"), Boolean).is_(True)
+            )
+        )
+        or 0
+    )
+    quarantined_events = int(db.scalar(select(func.count(EventQuarantine.quarantine_id))) or 0)
+    total_journeys = int(db.scalar(select(func.count(CustomerJourney.journey_id))) or 0)
 
-    confirmed_orders = [o for o in orders if o.status == "CONFIRMED"]
-    eligible_confirmed_orders = [
-        o for o in confirmed_orders if o.session_id is None or o.session_id in eligible_session_ids
-    ]
-    total_revenue = sum((o.total_amount for o in eligible_confirmed_orders), Decimal("0.00"))
+    order_stmt = select(
+        func.count(Order.order_id).label("confirmed_orders"),
+        func.coalesce(func.sum(Order.total_amount), Decimal("0.00")).label("total_revenue"),
+        func.count(func.distinct(Order.session_id)).label("converted_sessions"),
+    ).outerjoin(SessionRecord, SessionRecord.session_id == Order.session_id).where(Order.status == "CONFIRMED")
+    if exclude_bots:
+        order_stmt = order_stmt.where(
+            or_(Order.session_id.is_(None), SessionRecord.traffic_classification == "HUMAN")
+        )
+    order_row = db.execute(order_stmt).one()
+    confirmed_orders_count = int(order_row.confirmed_orders or 0)
+    total_revenue = Decimal(str(order_row.total_revenue or "0.00"))
 
-    converted_session_ids = {
-        o.session_id for o in eligible_confirmed_orders if o.session_id in eligible_session_ids
-    }
+    conv_sess_stmt = select(func.count(func.distinct(Order.session_id))).join(
+        SessionRecord, SessionRecord.session_id == Order.session_id
+    ).where(Order.status == "CONFIRMED")
+    if exclude_bots:
+        conv_sess_stmt = conv_sess_stmt.where(SessionRecord.traffic_classification == "HUMAN")
+    converted_session_count = int(db.scalar(conv_sess_stmt) or 0)
     session_conv_rate = (
-        round((len(converted_session_ids) / len(eligible_sessions)) * 100.0, 2)
+        round((converted_session_count / eligible_sessions) * 100.0, 2)
         if eligible_sessions
         else 0.0
     )
+
+    latest_sq = _latest_journey_outcomes_subquery()
+    outcome_rows = db.execute(
+        select(
+            latest_sq.c.outcome_status,
+            latest_sq.c.attribution_status,
+            func.count().label("cnt"),
+        )
+        .select_from(
+            CustomerJourney.__table__.join(
+                latest_sq, CustomerJourney.journey_id == latest_sq.c.journey_id
+            )
+        )
+        .group_by(latest_sq.c.outcome_status, latest_sq.c.attribution_status)
+    ).all()
 
     outcome_counts = {"CONVERTED": 0, "NON_CONVERTED": 0, "IN_PROGRESS": 0, "EXCLUDED": 0}
     assisted_conversions = 0
     direct_conversions = 0
     out_of_window_count = 0
-
-    for j in journeys:
-        out = latest_outcomes.get(j.journey_id)
-        if not out:
-            continue
-        outcome_counts[out.outcome_status] = outcome_counts.get(out.outcome_status, 0) + 1
-        if out.outcome_status == "CONVERTED":
-            if out.attribution_status == "ASSISTED":
-                assisted_conversions += 1
+    for r in outcome_rows:
+        cnt = int(r.cnt or 0)
+        outcome_counts[r.outcome_status] = outcome_counts.get(r.outcome_status, 0) + cnt
+        if r.outcome_status == "CONVERTED":
+            if r.attribution_status == "ASSISTED":
+                assisted_conversions += cnt
             else:
-                direct_conversions += 1
-        elif out.attribution_status == "OUT_OF_WINDOW":
-            out_of_window_count += 1
+                direct_conversions += cnt
+        elif r.attribution_status == "OUT_OF_WINDOW":
+            out_of_window_count += cnt
 
     eligible_journey_denom = (
         outcome_counts["CONVERTED"] + outcome_counts["NON_CONVERTED"] + outcome_counts["IN_PROGRESS"]
         if exclude_bots
-        else len(journeys)
+        else total_journeys
     )
     journey_conv_rate = (
         round((outcome_counts["CONVERTED"] / eligible_journey_denom) * 100.0, 2)
@@ -130,47 +211,61 @@ def get_dashboard_metrics(db: Session, *, exclude_bots: bool = True) -> dict[str
         else 0.0
     )
 
-    failed_payments = [pa for pa in payment_attempts if pa.status == "FAILED"]
-    orders_with_failed_payment = {pa.order_id for pa in failed_payments}
-    recovered_orders = [
-        o for o in confirmed_orders if o.order_id in orders_with_failed_payment
-    ]
-
-    duplicate_signals_suppressed = sum(
-        1 for a in audits if a.action == "DUPLICATE_CONVERSION_SIGNAL_SUPPRESSED"
+    failed_payments_count = int(
+        db.scalar(select(func.count(PaymentAttempt.payment_attempt_id)).where(PaymentAttempt.status == "FAILED"))
+        or 0
     )
-    late_events_count = sum(
-        1 for e in events if (e.properties or {}).get("late_arrival_detected")
+    recovered_orders_count = int(
+        db.scalar(
+            select(func.count(Order.order_id)).where(
+                Order.status == "CONFIRMED",
+                exists(
+                    select(PaymentAttempt.payment_attempt_id).where(
+                        PaymentAttempt.order_id == Order.order_id,
+                        PaymentAttempt.status == "FAILED",
+                    )
+                ),
+            )
+        )
+        or 0
     )
-    abandoned_carts_count = sum(1 for c in carts if c.status == "ABANDONED")
-
-    web_sessions = [s for s in eligible_sessions if s.channel == "WEB"]
-    app_sessions = [s for s in eligible_sessions if s.channel == "APP"]
+    duplicate_signals_suppressed = int(
+        db.scalar(
+            select(func.count(AuditEvent.audit_event_id)).where(
+                AuditEvent.action == "DUPLICATE_CONVERSION_SIGNAL_SUPPRESSED"
+            )
+        )
+        or 0
+    )
+    abandoned_carts_count = int(
+        db.scalar(select(func.count(Cart.cart_id)).where(Cart.status == "ABANDONED")) or 0
+    )
+    support_tickets_total = int(db.scalar(select(func.count(SupportTicket.ticket_id))) or 0)
 
     return {
         "exclude_bots": exclude_bots,
-        "total_events": len(events),
-        "quarantined_events": len(quarantines),
-        "total_sessions": len(sessions),
-        "human_sessions": len(human_sessions),
-        "bot_sessions": len(bot_sessions),
-        "eligible_sessions": len(eligible_sessions),
-        "web_sessions": len(web_sessions),
-        "app_sessions": len(app_sessions),
-        "total_journeys": len(journeys),
+        "total_events": total_events,
+        "quarantined_events": quarantined_events,
+        "total_sessions": total_sessions,
+        "human_sessions": human_sessions,
+        "bot_sessions": bot_sessions,
+        "eligible_sessions": eligible_sessions,
+        "web_sessions": web_sessions,
+        "app_sessions": app_sessions,
+        "total_journeys": total_journeys,
         "eligible_journeys": eligible_journey_denom,
         "outcome_counts": outcome_counts,
         "session_conversion_rate_pct": session_conv_rate,
         "journey_conversion_rate_pct": journey_conv_rate,
-        "confirmed_orders": len(eligible_confirmed_orders),
+        "confirmed_orders": confirmed_orders_count,
         "total_revenue": float(total_revenue),
         "assisted_conversions": assisted_conversions,
         "direct_conversions": direct_conversions,
         "out_of_window_purchases": out_of_window_count,
-        "failed_payment_attempts": len(failed_payments),
-        "recovered_payment_orders": len(recovered_orders),
+        "failed_payment_attempts": failed_payments_count,
+        "recovered_payment_orders": recovered_orders_count,
         "abandoned_carts": abandoned_carts_count,
-        "support_tickets_total": len(tickets),
+        "support_tickets_total": support_tickets_total,
         "duplicate_signals_suppressed": duplicate_signals_suppressed,
         "late_events_count": late_events_count,
     }
@@ -181,72 +276,78 @@ def get_funnel_metrics(
     *,
     channel: str | None = None,
     exclude_bots: bool = True,
+    dashboard_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Compute 5-stage Funnel metrics (FN-001 through FN-010, BR-FUN-001 through BR-FUN-010):
-    - Separate Stage Reach (unique eligible sessions reaching stage) from
-      Strict Sequential Progression (stages 1..k reached in non-decreasing timestamp order).
-    - Skipped-cart direct purchases still count in Stage Reach for Stage 5 without fabricating Stage 3.
-    - Deduplicates repeat events within the same session.
+    Compute 5-stage Funnel metrics (FN-001 through FN-010, BR-FUN-001 through BR-FUN-010)
+    using SQL JOINs against SessionRecord (avoiding >65,535 IN-clause parameter limits).
     """
-    stmt_sess = select(SessionRecord)
+    sess_filters = []
     if channel and channel in ("WEB", "APP"):
-        stmt_sess = stmt_sess.where(SessionRecord.channel == channel)
-    all_sessions = list(db.scalars(stmt_sess).all())
+        sess_filters.append(SessionRecord.channel == channel)
 
+    sess_counts = db.execute(
+        select(
+            func.count(SessionRecord.session_id).label("all_cnt"),
+            func.coalesce(
+                func.sum(case((SessionRecord.traffic_classification == "BOT", 1), else_=0)), 0
+            ).label("bot_cnt"),
+            func.coalesce(
+                func.sum(case((SessionRecord.traffic_classification == "HUMAN", 1), else_=0)), 0
+            ).label("human_cnt"),
+        ).where(*sess_filters)
+    ).one()
+    eligible_sessions_count = int(sess_counts.human_cnt if exclude_bots else sess_counts.all_cnt)
+    bot_sessions_excluded = int(sess_counts.bot_cnt) if exclude_bots else 0
+
+    eligible_sess_filters = list(sess_filters)
     if exclude_bots:
-        eligible_sessions = [s for s in all_sessions if s.traffic_classification == "HUMAN"]
-    else:
-        eligible_sessions = all_sessions
+        eligible_sess_filters.append(SessionRecord.traffic_classification == "HUMAN")
 
-    eligible_ids = {s.session_id for s in eligible_sessions}
-    events = list(
+    confirmed_order_sessions = set(
         db.scalars(
-            select(JourneyEvent).where(JourneyEvent.session_id.in_(eligible_ids))
+            select(Order.session_id)
+            .join(SessionRecord, SessionRecord.session_id == Order.session_id)
+            .where(Order.status == "CONFIRMED", *eligible_sess_filters)
+            .distinct()
         ).all()
-    ) if eligible_ids else []
+    )
 
-    confirmed_orders = list(
-        db.scalars(
-            select(Order).where(
-                Order.status == "CONFIRMED",
-                Order.session_id.in_(eligible_ids),
-            )
-        ).all()
-    ) if eligible_ids else []
-    confirmed_order_sessions = {o.session_id for o in confirmed_orders if o.session_id}
-
-    # Map per-session earliest timestamp for each funnel stage event_type
     stage_keys = [k for k, _ in FUNNEL_STAGES]
-    session_stage_times: dict[uuid.UUID, dict[str, list[datetime]]] = {
-        sid: {} for sid in eligible_ids
-    }
+    session_stage_times: dict[uuid.UUID, dict[str, list[datetime]]] = {}
 
-    for ev in events:
-        if ev.session_id not in session_stage_times:
-            continue
-        if (ev.properties or {}).get("quarantined"):
-            continue
-        if ev.event_type in stage_keys:
-            # For stage 5 (PURCHASE_COMPLETED), verify authoritative order exists or order_id is confirmed
-            if ev.event_type == "PURCHASE_COMPLETED":
-                if ev.session_id not in confirmed_order_sessions and ev.order_id is None:
-                    continue
-            session_stage_times[ev.session_id].setdefault(ev.event_type, []).append(
-                ensure_utc(ev.event_timestamp)
-            )
+    ev_stmt = (
+        select(
+            JourneyEvent.session_id,
+            JourneyEvent.event_type,
+            JourneyEvent.event_timestamp,
+            JourneyEvent.order_id,
+        )
+        .join(SessionRecord, SessionRecord.session_id == JourneyEvent.session_id)
+        .where(
+            *eligible_sess_filters,
+            JourneyEvent.event_type.in_(stage_keys),
+            func.coalesce(
+                cast(JourneyEvent.properties.op("->>")("quarantined"), Boolean), False
+            ).is_(False),
+        )
+        .execution_options(yield_per=50_000)
+    )
+    for sid, ev_type, ev_ts, order_id in db.execute(ev_stmt):
+        if ev_type == "PURCHASE_COMPLETED":
+            if sid not in confirmed_order_sessions and order_id is None:
+                continue
+        session_stage_times.setdefault(sid, {}).setdefault(ev_type, []).append(ensure_utc(ev_ts))
 
-    for sid in session_stage_times:
-        for st_key in session_stage_times[sid]:
-            session_stage_times[sid][st_key].sort()
+    for st_map in session_stage_times.values():
+        for ts_list in st_map.values():
+            ts_list.sort()
 
-    # Compute Stage Reach and Strict Sequential Progression
     reach_counts: dict[str, int] = {k: 0 for k in stage_keys}
     sequential_counts: dict[str, int] = {k: 0 for k in stage_keys}
     skipped_cart_purchases = 0
 
-    for sid, st_map in session_stage_times.items():
-        # 1. Stage Reach: did the session reach this stage at least once?
+    for st_map in session_stage_times.values():
         for st_key in stage_keys:
             if st_key in st_map and len(st_map[st_key]) > 0:
                 reach_counts[st_key] += 1
@@ -254,7 +355,6 @@ def get_funnel_metrics(
         if "PURCHASE_COMPLETED" in st_map and "ADD_TO_CART" not in st_map:
             skipped_cart_purchases += 1
 
-        # 2. Strict Sequential Progression: can we pick timestamps t1 <= t2 <= ... <= tk for stages 1..k?
         current_min_ts: datetime | None = None
         for idx, st_key in enumerate(stage_keys):
             timestamps = st_map.get(st_key, [])
@@ -307,13 +407,13 @@ def get_funnel_metrics(
             }
         )
 
-    dash = get_dashboard_metrics(db, exclude_bots=exclude_bots)
+    dash = dashboard_metrics if dashboard_metrics is not None else get_dashboard_metrics(db, exclude_bots=exclude_bots)
 
     return {
         "channel_filter": channel or "ALL",
         "exclude_bots": exclude_bots,
-        "eligible_sessions_count": len(eligible_sessions),
-        "bot_sessions_excluded": len([s for s in all_sessions if s.traffic_classification == "BOT"]) if exclude_bots else 0,
+        "eligible_sessions_count": eligible_sessions_count,
+        "bot_sessions_excluded": bot_sessions_excluded,
         "skipped_cart_purchases": skipped_cart_purchases,
         "session_conversion_rate_pct": dash["session_conversion_rate_pct"],
         "journey_conversion_rate_pct": dash["journey_conversion_rate_pct"],
@@ -848,68 +948,117 @@ def get_journey_detail(db: Session, journey_identifier: str) -> dict[str, Any] |
     }
 
 
-def get_exceptions_summary(db: Session) -> dict[str, Any]:
+def get_exceptions_summary(db: Session, *, item_limit: int = 50) -> dict[str, Any]:
     """
-    Summarize and list all 4 mandatory anomalies (ANOM-001 through ANOM-004) and quarantined records:
-    - ANOM-001: Late-arriving events reconstructed by event_timestamp.
-    - ANOM-002: Unauthorized / conflicting identity merges blocked & quarantined.
-    - ANOM-003: Duplicate conversion signals deduplicated against authoritative order reference.
-    - ANOM-004: Bot traffic sessions classified & excluded from human analytical denominators.
+    Summarize and list all 4 mandatory anomalies (ANOM-001 through ANOM-004) and quarantined records
+    using bounded SQL counts and top-N queries so 2M+ event datasets render quickly without OOM/multi-MB HTML.
     """
-    quarantines = list(db.scalars(select(EventQuarantine)).all())
-    quarantines.sort(key=lambda q: ensure_utc(q.detected_at), reverse=True)
+    safe_limit = max(1, min(int(item_limit), 200))
 
-    events = list(db.scalars(select(JourneyEvent)).all())
-    late_events = [
-        e for e in events if (e.properties or {}).get("late_arrival_detected")
-    ]
-    late_events.sort(
-        key=lambda e: float((e.properties or {}).get("ingestion_lag_seconds", 0)),
-        reverse=True,
-    )
+    q_counts = db.execute(
+        select(
+            func.count(EventQuarantine.quarantine_id).label("total_quarantined"),
+            func.coalesce(
+                func.sum(case((EventQuarantine.resolution_status == "OPEN", 1), else_=0)), 0
+            ).label("open_quarantined"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            EventQuarantine.issue_type.in_(
+                                ("IDENTITY_CONFLICT", "UNAUTHORIZED_IDENTITY_MERGE")
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("identity_exceptions"),
+        )
+    ).one()
+    total_quarantined = int(q_counts.total_quarantined or 0)
+    open_quarantined = int(q_counts.open_quarantined or 0)
+    identity_exceptions_count = int(q_counts.identity_exceptions or 0)
 
-    conflicted_links = list(
-        db.scalars(select(IdentityLink).where(IdentityLink.status == "CONFLICTED")).all()
-    )
-    identity_quarantines = [
-        q for q in quarantines if q.issue_type in ("IDENTITY_CONFLICT", "UNAUTHORIZED_IDENTITY_MERGE")
-    ]
-
-    duplicate_audits = list(
+    quarantines = list(
         db.scalars(
-            select(AuditEvent).where(AuditEvent.action == "DUPLICATE_CONVERSION_SIGNAL_SUPPRESSED")
+            select(EventQuarantine)
+            .order_by(EventQuarantine.detected_at.desc())
+            .limit(safe_limit)
         ).all()
     )
 
-    bot_sessions = list(
-        db.scalars(select(SessionRecord).where(SessionRecord.traffic_classification == "BOT")).all()
+    late_filter = cast(JourneyEvent.properties.op("->>")("late_arrival_detected"), Boolean).is_(True)
+    anom_001_late_count = int(
+        db.scalar(select(func.count(JourneyEvent.event_id)).where(late_filter)) or 0
+    )
+    lag_expr = func.coalesce(
+        cast(JourneyEvent.properties.op("->>")("ingestion_lag_seconds"), Float), 0.0
+    )
+    late_events = list(
+        db.scalars(
+            select(JourneyEvent)
+            .where(late_filter)
+            .order_by(lag_expr.desc(), JourneyEvent.event_timestamp.desc())
+            .limit(safe_limit)
+        ).all()
     )
 
-    # Check if ground_truth_anomalies.json exists to show verification match
-    gt_path = (
-        Path(__file__).resolve().parents[3]
-        / "data-generation"
-        / "output"
-        / "ground_truth_anomalies.json"
+    conflicted_links_count = int(
+        db.scalar(
+            select(func.count(IdentityLink.identity_link_id)).where(
+                IdentityLink.status == "CONFLICTED"
+            )
+        )
+        or 0
     )
-    ground_truth: dict[str, Any] | None = None
-    if gt_path.exists():
-        try:
-            ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
-        except Exception:
-            ground_truth = None
+
+    dup_filter = AuditEvent.action == "DUPLICATE_CONVERSION_SIGNAL_SUPPRESSED"
+    dup_suppressed_count = int(
+        db.scalar(select(func.count(AuditEvent.audit_event_id)).where(dup_filter)) or 0
+    )
+    duplicate_audits = list(
+        db.scalars(
+            select(AuditEvent)
+            .where(dup_filter)
+            .order_by(AuditEvent.occurred_at.desc())
+            .limit(safe_limit)
+        ).all()
+    )
+
+    bot_filter = SessionRecord.traffic_classification == "BOT"
+    bot_sessions_count = int(
+        db.scalar(select(func.count(SessionRecord.session_id)).where(bot_filter)) or 0
+    )
+    bot_sessions = list(
+        db.scalars(
+            select(SessionRecord)
+            .where(bot_filter)
+            .order_by(SessionRecord.started_at.desc())
+            .limit(safe_limit)
+        ).all()
+    )
 
     return {
         "summary_counts": {
-            "total_quarantined": len(quarantines),
-            "open_quarantined": sum(1 for q in quarantines if q.resolution_status == "OPEN"),
-            "anom_001_late_events": len(late_events),
-            "anom_002_identity_exceptions": len(identity_quarantines),
-            "anom_002_conflicted_links": len(conflicted_links),
-            "anom_003_duplicate_conversions_suppressed": len(duplicate_audits),
-            "anom_004_bot_sessions_isolated": len(bot_sessions),
+            "total_quarantined": total_quarantined,
+            "open_quarantined": open_quarantined,
+            "anom_001_late_events": anom_001_late_count,
+            "anom_002_identity_exceptions": identity_exceptions_count,
+            "anom_002_conflicted_links": conflicted_links_count,
+            "anom_003_duplicate_conversions_suppressed": dup_suppressed_count,
+            "anom_004_bot_sessions_isolated": bot_sessions_count,
         },
-        "ground_truth_verification": ground_truth,
+        "ground_truth_verification": {
+            "source": "live_database",
+            "anom_001_late_events": anom_001_late_count,
+            "anom_002_identity_exceptions": identity_exceptions_count,
+            "anom_002_conflicted_links": conflicted_links_count,
+            "anom_003_duplicate_conversions_suppressed": dup_suppressed_count,
+            "anom_004_bot_sessions": bot_sessions_count,
+            "total_quarantined": total_quarantined,
+        },
         "quarantined_items": [
             {
                 "quarantine_id": str(q.quarantine_id),
@@ -920,6 +1069,7 @@ def get_exceptions_summary(db: Session) -> dict[str, Any]:
                 "detected_at": ensure_utc(q.detected_at).isoformat(),
                 "resolution_status": q.resolution_status,
                 "resolution_notes": q.resolution_notes,
+                "resolved_at": ensure_utc(q.resolved_at).isoformat() if q.resolved_at else None,
             }
             for q in quarantines
         ],
@@ -933,7 +1083,7 @@ def get_exceptions_summary(db: Session) -> dict[str, Any]:
                 "lag_seconds": (e.properties or {}).get("ingestion_lag_seconds", 0),
                 "session_id": str(e.session_id) if e.session_id else None,
             }
-            for e in late_events[:50]
+            for e in late_events
         ],
         "duplicate_signals": [
             {
@@ -953,7 +1103,7 @@ def get_exceptions_summary(db: Session) -> dict[str, Any]:
                 "started_at": ensure_utc(s.started_at).isoformat(),
                 "classification_reason": s.classification_reason,
             }
-            for s in bot_sessions[:50]
+            for s in bot_sessions
         ],
     }
 

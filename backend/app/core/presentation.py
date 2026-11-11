@@ -60,6 +60,27 @@ QUARANTINE_ISSUE_LABELS: dict[str, str] = {
     "UNAUTHORIZED_IDENTITY_MERGE": "Identity merge blocked",
     "IDENTITY_CONFLICT": "Identity conflict",
     "MISSING_CLIENT_INSTANCE_ID": "Missing client instance",
+    "MALFORMED_EVENT": "Malformed event",
+}
+
+QUARANTINE_ISSUE_BADGES: dict[str, str] = {
+    "UNAUTHORIZED_IDENTITY_MERGE": "bg-rose-500/15 text-rose-300 border-rose-500/30",
+    "IDENTITY_CONFLICT": "bg-rose-500/15 text-rose-300 border-rose-500/30",
+    "MISSING_CLIENT_INSTANCE_ID": "bg-amber-500/15 text-amber-300 border-amber-500/30",
+    "MALFORMED_EVENT": "bg-orange-500/15 text-orange-300 border-orange-500/30",
+}
+DEFAULT_QUARANTINE_BADGE = "bg-slate-700/40 text-slate-300 border-slate-600/40"
+
+QUARANTINE_IMPACT_DESCRIPTIONS: dict[str, str] = {
+    "UNAUTHORIZED_IDENTITY_MERGE": "Kept separate from customer profile stitching to enforce consent requirements.",
+    "IDENTITY_CONFLICT": "Held out of identity stitching so separate customer profiles are not merged.",
+    "MISSING_CLIENT_INSTANCE_ID": "Excluded from sessionization and funnel metrics to avoid fragmented sessions.",
+    "MALFORMED_EVENT": "Excluded from journey and conversion metrics pending valid telemetry.",
+}
+
+BOT_REASON_LABELS: dict[str, str] = {
+    "HEADLESS_SCRAPER_BURST": "Headless scraper burst",
+    "HIGH_VELOCITY_SCRAPER": "High-velocity automated traffic",
 }
 
 STATUS_LABELS: dict[str, str] = {
@@ -134,6 +155,44 @@ def humanize_code(value: str | None, mapping: dict[str, str], default: str = "â€
     return value.replace("_", " ").strip().capitalize()
 
 
+def quarantine_badge_class(issue_type: str | None) -> str:
+    """Return semantic Tailwind badge classes for a quarantine issue category."""
+    if not issue_type:
+        return DEFAULT_QUARANTINE_BADGE
+    return QUARANTINE_ISSUE_BADGES.get(issue_type, DEFAULT_QUARANTINE_BADGE)
+
+
+def summarize_quarantine_issue(issue_type: str | None, raw_reason: str | None = None) -> str:
+    """Summarize a quarantined record in business language without inventing missing evidence."""
+    reason_text = raw_reason or ""
+    if issue_type == "UNAUTHORIZED_IDENTITY_MERGE":
+        if "consent_status is 'DENIED'" in reason_text:
+            return "Identity merge blocked because customer tracking consent was denied."
+        if "consent_status is 'WITHDRAWN'" in reason_text:
+            return "Identity merge blocked because customer tracking consent was withdrawn."
+        return "Identity merge blocked because required consent was unavailable."
+    if issue_type == "IDENTITY_CONFLICT":
+        return "Customer identity could not be verified because conflicting identity evidence was detected."
+    if issue_type == "MISSING_CLIENT_INSTANCE_ID":
+        if reason_text.startswith("WEB event "):
+            return "Web event could not be assigned to a reliable session because client identification was missing."
+        if reason_text.startswith("APP event "):
+            return "App event could not be assigned to a reliable session because client identification was missing."
+        return "Event could not be assigned to a reliable session because client identification was missing."
+    if issue_type == "MALFORMED_EVENT":
+        return "Event rejected because its structure or required fields were invalid."
+    return "Record quarantined during data quality validation; review Technical Details for the recorded reason."
+
+
+def describe_quarantine_impact(issue_type: str | None) -> str:
+    """Return concise analytics-impact guidance for known quarantine categories."""
+    if not issue_type:
+        return ""
+    return QUARANTINE_IMPACT_DESCRIPTIONS.get(
+        issue_type, "Isolated from conversion analytics pending data steward review."
+    )
+
+
 def format_utc_timestamp(value: str | None) -> str:
     """Format an ISO-8601 timestamp string into a concise human-readable UTC timestamp."""
     if not value:
@@ -160,5 +219,9 @@ def register_presentation_filters(env: Environment) -> None:
     env.filters["label_source"] = lambda v: humanize_code(v, PURCHASE_SOURCE_LABELS)
     env.filters["label_ticket_issue"] = lambda v: humanize_code(v, TICKET_ISSUE_LABELS)
     env.filters["label_metric"] = lambda v: humanize_code(v, METRIC_LABELS)
+    env.filters["label_bot_reason"] = lambda v: humanize_code(v, BOT_REASON_LABELS)
+    env.filters["quarantine_badge_class"] = quarantine_badge_class
+    env.filters["summarize_quarantine_issue"] = summarize_quarantine_issue
+    env.filters["describe_quarantine_impact"] = describe_quarantine_impact
     env.filters["format_ts"] = format_utc_timestamp
 

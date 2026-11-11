@@ -22,9 +22,9 @@
 
 <!-- Top KPI Grid -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">7-Day Journey Conversion</div>
-    <div class="mt-2 flex items-baseline gap-2">
+    <div class="mt-2 flex flex-wrap items-baseline gap-2">
       <span class="text-3xl font-bold text-emerald-400 tabular-nums">{{ metrics.journey_conversion_rate_pct }}%</span>
       <span class="text-xs text-slate-400 tabular-nums">({{ metrics.outcome_counts.CONVERTED }} / {{ metrics.eligible_journeys }} journeys)</span>
     </div>
@@ -33,9 +33,9 @@
     </div>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Revenue</div>
-    <div class="mt-2 flex items-baseline gap-2">
+    <div class="mt-2 flex flex-wrap items-baseline gap-2">
       <span class="text-3xl font-bold text-white tabular-nums">${{ "{:,.2f}".format(metrics.total_revenue) }}</span>
       <span class="text-xs text-slate-400 tabular-nums">({{ metrics.confirmed_orders }} confirmed orders)</span>
     </div>
@@ -44,9 +44,9 @@
     </div>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Support &amp; Payment Recovery</div>
-    <div class="mt-2 flex items-baseline gap-2">
+    <div class="mt-2 flex flex-wrap items-baseline gap-2">
       <span class="text-3xl font-bold text-indigo-400 tabular-nums">{{ metrics.assisted_conversions }}</span>
       <span class="text-xs text-slate-400">support-assisted conversions</span>
     </div>
@@ -55,9 +55,9 @@
     </div>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Data Quality</div>
-    <div class="mt-2 flex items-baseline gap-2">
+    <div class="mt-2 flex flex-wrap items-baseline gap-2">
       <span class="text-3xl font-bold text-amber-400 tabular-nums">{{ metrics.quarantined_events }}</span>
       <span class="text-xs text-slate-400">quarantined records</span>
     </div>
@@ -69,7 +69,7 @@
 
 <!-- Charts & Outcome Breakdown -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-  <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
+  <div class="lg:col-span-2 min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-6">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <div>
         <h2 class="text-base font-semibold text-white">5-Stage Funnel Overview (Stage Reach vs. Strict Sequential Progression)</h2>
@@ -77,12 +77,12 @@
       </div>
       <a href="/funnels" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Full Funnel Analysis &rarr;</a>
     </div>
-    <div class="h-64">
+    <div class="relative w-full min-w-0 h-64">
       <canvas id="dashboardFunnelChart"></canvas>
     </div>
   </div>
 
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
+  <div class="min-w-0 bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
     <div>
       <h2 class="text-base font-semibold text-white mb-1">Journey Outcome Distribution</h2>
       <p class="text-xs text-slate-400 mb-4">Evaluated against a 7-day attribution window from each journey's first interaction.</p>
@@ -129,10 +129,10 @@
     Technical Details (Data model codes, rule mappings &amp; API references)
   </summary>
   <div class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-[11px]">
-    <div>Outcome enums: CONVERTED, IN_PROGRESS, NON_CONVERTED, EXCLUDED (OUT-001–006)</div>
-    <div>Data quality guardrails: ANOM-001 (late events), ANOM-003 (duplicate signals), ANOM-004 (bots)</div>
-    <div>Funnel methodology: Stage Reach vs. Strict Sequential Progression (FN-002)</div>
-    <div>API endpoints: <a href="/api/v1/dashboard" target="_blank" class="text-indigo-400 underline">/api/v1/dashboard</a>, <a href="/api/v1/funnels" target="_blank" class="text-indigo-400 underline">/api/v1/funnels</a></div>
+    <div class="min-w-0 break-words">Outcome enums: CONVERTED, IN_PROGRESS, NON_CONVERTED, EXCLUDED (OUT-001–006)</div>
+    <div class="min-w-0 break-words">Data quality guardrails: ANOM-001 (late events), ANOM-003 (duplicate signals), ANOM-004 (bots)</div>
+    <div class="min-w-0 break-words">Funnel methodology: Stage Reach vs. Strict Sequential Progression (FN-002)</div>
+    <div class="min-w-0 break-words">API endpoints: <a href="/api/v1/dashboard" target="_blank" class="text-indigo-400 underline">/api/v1/dashboard</a>, <a href="/api/v1/funnels" target="_blank" class="text-indigo-400 underline">/api/v1/funnels</a></div>
   </div>
 </details>
 
