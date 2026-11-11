@@ -2,13 +2,13 @@
 {% block content %}
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
   <div>
-    <h1 class="text-2xl font-bold text-white">Executive Journey &amp; Conversion Overview</h1>
+    <h1 class="text-2xl font-bold text-white">Customer Journey &amp; Conversion Overview</h1>
     <p class="text-sm text-slate-400 mt-1">
-      End-to-end reconstructed customer journeys across Web, App, Support, and Authoritative Purchase records.
+      End-to-end customer journeys across Web, App, Support, and confirmed orders.
     </p>
   </div>
-  <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs">
-    <span class="text-slate-400 px-2">Bot Traffic Filter (ANOM-004):</span>
+  <div class="flex flex-wrap items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs">
+    <span class="text-slate-400 px-2">Bot Traffic Filter:</span>
     <a href="/dashboard?exclude_bots=true"
        class="px-3 py-1.5 rounded font-medium {% if exclude_bots %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800{% endif %}">
       Human Only ({{ metrics.human_sessions }} sessions)
@@ -25,44 +25,44 @@
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
     <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">7-Day Journey Conversion</div>
     <div class="mt-2 flex items-baseline gap-2">
-      <span class="text-3xl font-bold text-emerald-400">{{ metrics.journey_conversion_rate_pct }}%</span>
-      <span class="text-xs text-slate-400">({{ metrics.outcome_counts.CONVERTED }} / {{ metrics.eligible_journeys }} journeys)</span>
+      <span class="text-3xl font-bold text-emerald-400 tabular-nums">{{ metrics.journey_conversion_rate_pct }}%</span>
+      <span class="text-xs text-slate-400 tabular-nums">({{ metrics.outcome_counts.CONVERTED }} / {{ metrics.eligible_journeys }} journeys)</span>
     </div>
     <div class="mt-2 text-xs text-slate-500">
-      Session-level conversion: <strong class="text-slate-300">{{ metrics.session_conversion_rate_pct }}%</strong>
+      Session conversion rate: <strong class="text-slate-300 tabular-nums">{{ metrics.session_conversion_rate_pct }}%</strong>
     </div>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Authoritative Revenue</div>
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Revenue</div>
     <div class="mt-2 flex items-baseline gap-2">
-      <span class="text-3xl font-bold text-white">${{ "{:,.2f}".format(metrics.total_revenue) }}</span>
-      <span class="text-xs text-slate-400">({{ metrics.confirmed_orders }} orders)</span>
+      <span class="text-3xl font-bold text-white tabular-nums">${{ "{:,.2f}".format(metrics.total_revenue) }}</span>
+      <span class="text-xs text-slate-400 tabular-nums">({{ metrics.confirmed_orders }} confirmed orders)</span>
     </div>
     <div class="mt-2 text-xs text-emerald-400">
-      {{ metrics.duplicate_signals_suppressed }} duplicate purchase signals suppressed (ANOM-003)
+      {{ metrics.duplicate_signals_suppressed }} duplicate purchase signals prevented
     </div>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Friction &amp; Support Recovery</div>
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Support &amp; Payment Recovery</div>
     <div class="mt-2 flex items-baseline gap-2">
-      <span class="text-3xl font-bold text-indigo-400">{{ metrics.assisted_conversions }}</span>
+      <span class="text-3xl font-bold text-indigo-400 tabular-nums">{{ metrics.assisted_conversions }}</span>
       <span class="text-xs text-slate-400">support-assisted conversions</span>
     </div>
     <div class="mt-2 text-xs text-slate-400">
-      Payment retries recovered: <strong class="text-slate-200">{{ metrics.recovered_payment_orders }}</strong> ({{ metrics.failed_payment_attempts }} failed attempts)
+      Recovered after payment retry: <strong class="text-slate-200 tabular-nums">{{ metrics.recovered_payment_orders }}</strong> ({{ metrics.failed_payment_attempts }} failed attempts)
     </div>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Data Quality Guardrails</div>
+    <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Data Quality</div>
     <div class="mt-2 flex items-baseline gap-2">
-      <span class="text-3xl font-bold text-amber-400">{{ metrics.quarantined_events }}</span>
-      <span class="text-xs text-slate-400">quarantined anomalies</span>
+      <span class="text-3xl font-bold text-amber-400 tabular-nums">{{ metrics.quarantined_events }}</span>
+      <span class="text-xs text-slate-400">quarantined records</span>
     </div>
     <div class="mt-2 text-xs text-slate-400">
-      Bot sessions isolated: <strong class="text-slate-200">{{ metrics.bot_sessions }}</strong> | Late events: <strong class="text-slate-200">{{ metrics.late_events_count }}</strong>
+      Bot sessions excluded: <strong class="text-slate-200 tabular-nums">{{ metrics.bot_sessions }}</strong> | Late-arriving events: <strong class="text-slate-200 tabular-nums">{{ metrics.late_events_count }}</strong>
     </div>
   </div>
 </div>
@@ -70,10 +70,10 @@
 <!-- Charts & Outcome Breakdown -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
   <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <div>
-        <h2 class="text-base font-semibold text-white">5-Stage Funnel Overview (Stage Reach vs. Strict Sequential)</h2>
-        <p class="text-xs text-slate-400">Direct purchases skipping cart are counted in Stage Reach without fabricating missing stages (FN-002).</p>
+        <h2 class="text-base font-semibold text-white">5-Stage Funnel Overview (Stage Reach vs. Strict Sequential Progression)</h2>
+        <p class="text-xs text-slate-400">Direct purchases that skip cart are counted in Stage Reach without fabricating missing steps.</p>
       </div>
       <a href="/funnels" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Full Funnel Analysis &rarr;</a>
     </div>
@@ -85,44 +85,56 @@
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
     <div>
       <h2 class="text-base font-semibold text-white mb-1">Journey Outcome Distribution</h2>
-      <p class="text-xs text-slate-400 mb-4">Evaluated against 7-day attribution window from first touch (OUT-001–006).</p>
+      <p class="text-xs text-slate-400 mb-4">Evaluated against a 7-day attribution window from each journey's first interaction.</p>
       <div class="space-y-3 text-sm">
         <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
           <span class="flex items-center gap-2">
             <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-            <span>CONVERTED (Within 7d Window)</span>
+            <span>Converted (within 7 days)</span>
           </span>
-          <span class="font-bold text-emerald-400">{{ metrics.outcome_counts.CONVERTED }}</span>
+          <span class="font-bold text-emerald-400 tabular-nums">{{ metrics.outcome_counts.CONVERTED }}</span>
         </div>
         <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
           <span class="flex items-center gap-2">
             <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
-            <span>IN_PROGRESS (Window Open &lt; 7d)</span>
+            <span>In progress (window open)</span>
           </span>
-          <span class="font-bold text-sky-400">{{ metrics.outcome_counts.IN_PROGRESS }}</span>
+          <span class="font-bold text-sky-400 tabular-nums">{{ metrics.outcome_counts.IN_PROGRESS }}</span>
         </div>
         <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
           <span class="flex items-center gap-2">
             <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
-            <span>NON_CONVERTED (Expired &ge; 7d)</span>
+            <span>Did not convert (window expired)</span>
           </span>
-          <span class="font-bold text-slate-300">{{ metrics.outcome_counts.NON_CONVERTED }}</span>
+          <span class="font-bold text-slate-300 tabular-nums">{{ metrics.outcome_counts.NON_CONVERTED }}</span>
         </div>
         <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
           <span class="flex items-center gap-2">
             <span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
-            <span>EXCLUDED (Bot Traffic Isolated)</span>
+            <span>Excluded (bot traffic)</span>
           </span>
-          <span class="font-bold text-rose-400">{{ metrics.outcome_counts.EXCLUDED }}</span>
+          <span class="font-bold text-rose-400 tabular-nums">{{ metrics.outcome_counts.EXCLUDED }}</span>
         </div>
       </div>
     </div>
-    <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-slate-400 flex justify-between">
-      <span>Abandoned Carts (&ge;24h): <strong class="text-amber-300">{{ metrics.abandoned_carts }}</strong></span>
-      <span>Out-of-Window (&gt;7d) Orders: <strong class="text-slate-200">{{ metrics.out_of_window_purchases }}</strong></span>
+    <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-slate-400 flex flex-wrap justify-between gap-2">
+      <span>Abandoned Carts (&ge;24h): <strong class="text-amber-300 tabular-nums">{{ metrics.abandoned_carts }}</strong></span>
+      <span>Purchases After 7-Day Window: <strong class="text-slate-200 tabular-nums">{{ metrics.out_of_window_purchases }}</strong></span>
     </div>
   </div>
 </div>
+
+<details class="bg-slate-900/60 border border-slate-800 rounded-xl px-5 py-3 text-xs text-slate-400">
+  <summary class="cursor-pointer font-medium text-slate-300 hover:text-white select-none">
+    Technical Details (Data model codes, rule mappings &amp; API references)
+  </summary>
+  <div class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-[11px]">
+    <div>Outcome enums: CONVERTED, IN_PROGRESS, NON_CONVERTED, EXCLUDED (OUT-001–006)</div>
+    <div>Data quality guardrails: ANOM-001 (late events), ANOM-003 (duplicate signals), ANOM-004 (bots)</div>
+    <div>Funnel methodology: Stage Reach vs. Strict Sequential Progression (FN-002)</div>
+    <div>API endpoints: <a href="/api/v1/dashboard" target="_blank" class="text-indigo-400 underline">/api/v1/dashboard</a>, <a href="/api/v1/funnels" target="_blank" class="text-indigo-400 underline">/api/v1/funnels</a></div>
+  </div>
+</details>
 
 <script>
   (function() {
@@ -163,4 +175,3 @@
   })();
 </script>
 {% endblock %}
-

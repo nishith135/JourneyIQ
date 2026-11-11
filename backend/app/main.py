@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.presentation import register_presentation_filters
 from app.db.session import get_db
 from app.models.entities import CustomerJourney, EventQuarantine
 from app.services.analytics_service import (
@@ -28,6 +29,7 @@ from app.services.domain_service import calculate_journey_outcome, withdraw_cons
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+register_presentation_filters(templates.env)
 
 app = FastAPI(
     title=settings.app_name,
@@ -214,25 +216,48 @@ def api_exceptions(db: Session = Depends(get_db)) -> dict[str, Any]:
     return get_exceptions_summary(db)
 
 
+VALID_QUARANTINE_STATUSES = ("OPEN", "RESOLVED", "DISMISSED")
+
+
+def _resolve_quarantine_record(
+    db: Session,
+    *,
+    quarantine_id: str,
+    resolution_status: str,
+    resolution_notes: str,
+) -> EventQuarantine:
+    """Validate identifier and target resolution status before updating EventQuarantine."""
+    try:
+        q_uuid = uuid.UUID(quarantine_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid quarantine UUID.") from exc
+
+    q = db.get(EventQuarantine, q_uuid)
+    if not q:
+        raise HTTPException(status_code=404, detail="Quarantine record not found.")
+
+    if resolution_status not in VALID_QUARANTINE_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid resolution_status.")
+
+    q.resolution_status = resolution_status
+    q.resolution_notes = resolution_notes
+    q.resolved_at = datetime.now(timezone.utc)
+    db.commit()
+    return q
+
+
 @app.post("/api/v1/exceptions/quarantine/{quarantine_id}/resolve")
 def api_resolve_quarantine(
     quarantine_id: str,
     payload: QuarantineResolveRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    try:
-        q_uuid = uuid.UUID(quarantine_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid quarantine UUID.")
-    q = db.get(EventQuarantine, q_uuid)
-    if not q:
-        raise HTTPException(status_code=404, detail="Quarantine record not found.")
-    if payload.resolution_status not in ("OPEN", "RESOLVED", "DISMISSED"):
-        raise HTTPException(status_code=400, detail="Invalid resolution_status.")
-    q.resolution_status = payload.resolution_status
-    q.resolution_notes = payload.resolution_notes
-    q.resolved_at = datetime.now(timezone.utc)
-    db.commit()
+    q = _resolve_quarantine_record(
+        db,
+        quarantine_id=quarantine_id,
+        resolution_status=payload.resolution_status,
+        resolution_notes=payload.resolution_notes or "",
+    )
     return {
         "quarantine_id": str(q.quarantine_id),
         "quarantine_business_id": q.quarantine_business_id,
@@ -440,6 +465,7 @@ def ui_withdraw_consent(
 def view_exceptions(
     request: Request,
     banner_msg: str | None = Query(None),
+    banner_type: str = Query("success"),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     exc = get_exceptions_summary(db)
@@ -450,6 +476,7 @@ def view_exceptions(
             "active_nav": "exceptions",
             "exc": exc,
             "banner_msg": banner_msg,
+            "banner_type": banner_type if banner_type in ("success", "error") else "success",
         },
     )
 
@@ -461,14 +488,24 @@ def ui_resolve_quarantine(
     resolution_notes: str = Form("Verified and resolved during data quality review."),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    q = db.get(EventQuarantine, uuid.UUID(quarantine_id))
-    if q:
-        q.resolution_status = resolution_status
-        q.resolution_notes = resolution_notes
-        q.resolved_at = datetime.now(timezone.utc)
-        db.commit()
+    try:
+        _resolve_quarantine_record(
+            db,
+            quarantine_id=quarantine_id,
+            resolution_status=resolution_status,
+            resolution_notes=resolution_notes,
+        )
+        params = {
+            "banner_msg": f"Updated quarantine item to {resolution_status}",
+            "banner_type": "success",
+        }
+    except HTTPException as exc:
+        params = {
+            "banner_msg": str(exc.detail),
+            "banner_type": "error",
+        }
     return RedirectResponse(
-        url=f"/exceptions?banner_msg=Updated+quarantine+item+to+{resolution_status}",
+        url=f"/exceptions?{urlencode(params)}",
         status_code=303,
     )
 

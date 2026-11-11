@@ -1,48 +1,48 @@
 {% extends "base.html" %}
 {% block content %}
 {% if banner_msg %}
-<div class="mb-6 p-4 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-sm">
+<div class="mb-6 p-4 rounded-xl text-sm border {% if banner_type == 'error' %}bg-rose-500/20 border-rose-500/40 text-rose-200{% else %}bg-emerald-500/20 border-emerald-500/40 text-emerald-200{% endif %}">
   {{ banner_msg }}
 </div>
 {% endif %}
 
 <div class="mb-8">
-  <h1 class="text-2xl font-bold text-white">Exceptions, Quarantine &amp; Mandatory Anomaly Guardrails</h1>
+  <h1 class="text-2xl font-bold text-white">Data Quality &amp; Exceptions</h1>
   <p class="text-sm text-slate-400 mt-1">
-    Dedicated investigation view for <strong>ANOM-001</strong> (Late Events), <strong>ANOM-002</strong> (Identity Conflicts &amp; Unauthorized Merges), <strong>ANOM-003</strong> (Duplicate Purchase Signals), and <strong>ANOM-004</strong> (Bot Traffic Isolation).
+    Monitor late-arriving events, blocked identity merges, duplicate purchase signals, and isolated bot traffic.
   </p>
 </div>
 
-<!-- 4 Mandatory Anomaly Cards -->
+<!-- 4 Data Quality Summary Cards -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-mono text-amber-400">ANOM-001</div>
+    <div class="text-xs font-medium text-amber-400 uppercase tracking-wider">Timing Guardrail</div>
     <div class="text-sm font-semibold text-white mt-0.5">Late-Arriving Events</div>
-    <div class="text-3xl font-bold text-white mt-2">{{ exc.summary_counts.anom_001_late_events }}</div>
-    <p class="text-xs text-slate-400 mt-2">Reconstructed by occurrence time (<code class="text-slate-200">event_timestamp</code>) rather than <code class="text-slate-200">ingestion_timestamp</code>.</p>
+    <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_001_late_events }}</div>
+    <p class="text-xs text-slate-400 mt-2">Ordered by Event time rather than Received time to preserve accurate journey sequence.</p>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-mono text-rose-400">ANOM-002</div>
-    <div class="text-sm font-semibold text-white mt-0.5">Unauthorized / Conflicted Merges</div>
-    <div class="text-3xl font-bold text-white mt-2">{{ exc.summary_counts.anom_002_identity_exceptions }}</div>
+    <div class="text-xs font-medium text-rose-400 uppercase tracking-wider">Identity &amp; Consent</div>
+    <div class="text-sm font-semibold text-white mt-0.5">Blocked Identity Merges</div>
+    <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_002_identity_exceptions }}</div>
     <p class="text-xs text-slate-400 mt-2">
-      {{ exc.summary_counts.anom_002_conflicted_links }} conflicting customer mappings + missing/denied consent blocked &amp; quarantined.
+      {{ exc.summary_counts.anom_002_conflicted_links }} conflicting profile mappings and unauthorized merges quarantined before analytics.
     </p>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-mono text-emerald-400">ANOM-003</div>
-    <div class="text-sm font-semibold text-white mt-0.5">Duplicate Conversion Signals</div>
-    <div class="text-3xl font-bold text-white mt-2">{{ exc.summary_counts.anom_003_duplicate_conversions_suppressed }}</div>
-    <p class="text-xs text-slate-400 mt-2">Deduplicated by authoritative <code class="text-slate-200">(purchase_source, source_purchase_reference)</code>.</p>
+    <div class="text-xs font-medium text-emerald-400 uppercase tracking-wider">Revenue Integrity</div>
+    <div class="text-sm font-semibold text-white mt-0.5">Duplicate Purchase Signals</div>
+    <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_003_duplicate_conversions_suppressed }}</div>
+    <p class="text-xs text-slate-400 mt-2">Deduplicated against confirmed orders using each order's authoritative Purchase reference.</p>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs font-mono text-indigo-400">ANOM-004</div>
+    <div class="text-xs font-medium text-indigo-400 uppercase tracking-wider">Traffic Filtering</div>
     <div class="text-sm font-semibold text-white mt-0.5">Bot Sessions Isolated</div>
-    <div class="text-3xl font-bold text-white mt-2">{{ exc.summary_counts.anom_004_bot_sessions_isolated }}</div>
-    <p class="text-xs text-slate-400 mt-2">Classified on <code class="text-slate-200">Session</code> and excluded from human conversion denominators.</p>
+    <div class="text-3xl font-bold text-white mt-2 tabular-nums">{{ exc.summary_counts.anom_004_bot_sessions_isolated }}</div>
+    <p class="text-xs text-slate-400 mt-2">Identified at session level and excluded from human conversion metrics.</p>
   </div>
 </div>
 
@@ -51,19 +51,19 @@
   <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
     <div>
       <h2 class="text-base font-semibold text-white">Event Quarantine Queue ({{ exc.summary_counts.total_quarantined }} Total | {{ exc.summary_counts.open_quarantined }} Open)</h2>
-      <p class="text-xs text-slate-400">Includes missing client_instance_id on WEB/APP (SES-006), identity conflicts (ID-006), and consent-denied stitch attempts (ID-003/005).</p>
+      <p class="text-xs text-slate-400">Captures events missing a Client instance on Web/App, conflicting identity links, and merges blocked without consent.</p>
     </div>
   </div>
   <div class="overflow-x-auto">
     <table class="w-full text-left border-collapse text-xs">
       <thead>
         <tr class="border-b border-slate-800 bg-slate-950/60 uppercase text-slate-400">
-          <th class="py-3 px-4">Quarantine ID</th>
+          <th class="py-3 px-4">Record ID</th>
           <th class="py-3 px-4">Issue Type</th>
-          <th class="py-3 px-4">Reason &amp; Diagnostic Detail</th>
-          <th class="py-3 px-4">Detected At</th>
+          <th class="py-3 px-4">Reason &amp; Detail</th>
+          <th class="py-3 px-4">Detected</th>
           <th class="py-3 px-4">Status</th>
-          <th class="py-3 px-4 text-right">Steward Action</th>
+          <th class="py-3 px-4 text-right">Action</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/70">
@@ -71,20 +71,22 @@
         <tr class="hover:bg-slate-800/40">
           <td class="py-3 px-4 font-mono text-indigo-300">{{ q.quarantine_business_id }}</td>
           <td class="py-3 px-4">
-            <span class="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 font-mono">{{ q.issue_type }}</span>
+            <span class="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 font-medium whitespace-nowrap" title="{{ q.issue_type }}">
+              {{ q.issue_type | label_quarantine_issue }}
+            </span>
           </td>
           <td class="py-3 px-4 text-slate-300 max-w-xl">{{ q.reason }}</td>
-          <td class="py-3 px-4 font-mono text-slate-400">{{ q.detected_at }}</td>
+          <td class="py-3 px-4 text-slate-400 whitespace-nowrap" title="{{ q.detected_at }}">{{ q.detected_at | format_ts }}</td>
           <td class="py-3 px-4">
-            <span class="px-2 py-0.5 rounded font-semibold {% if q.resolution_status == 'OPEN' %}bg-amber-500/20 text-amber-300{% else %}bg-emerald-500/20 text-emerald-300{% endif %}">
-              {{ q.resolution_status }}
+            <span class="px-2 py-0.5 rounded font-semibold {% if q.resolution_status == 'OPEN' %}bg-amber-500/20 text-amber-300{% else %}bg-emerald-500/20 text-emerald-300{% endif %}" title="{{ q.resolution_status }}">
+              {{ q.resolution_status | label_status }}
             </span>
           </td>
           <td class="py-3 px-4 text-right">
             {% if q.resolution_status == 'OPEN' %}
             <form method="post" action="/exceptions/quarantine/{{ q.quarantine_id }}/resolve-ui" class="inline-flex gap-1">
               <input type="hidden" name="resolution_status" value="RESOLVED" />
-              <button type="submit" class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium">
+              <button type="submit" class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium whitespace-nowrap">
                 Mark Resolved
               </button>
             </form>
@@ -93,51 +95,70 @@
             {% endif %}
           </td>
         </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="py-8 px-4 text-center text-slate-500">No quarantined records found.</td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
 
-<!-- Detailed Tabs: Late Events (ANOM-001) & Duplicate Signals (ANOM-003) -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+<!-- Detailed Tabs: Late Events & Duplicate Signals -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-    <h2 class="text-base font-semibold text-white mb-2">ANOM-001: Late-Arriving Event Reconstruction</h2>
-    <p class="text-xs text-slate-400 mb-4">Events where ingestion_timestamp arrived &gt;5 minutes after event_timestamp.</p>
+    <h2 class="text-base font-semibold text-white mb-2">Late-Arriving Event Reconstruction</h2>
+    <p class="text-xs text-slate-400 mb-4">Events whose Received time arrived more than 5 minutes after Event time.</p>
     <div class="space-y-2 text-xs max-h-80 overflow-y-auto">
       {% for le in exc.late_events %}
-        <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
+        <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
           <div>
             <span class="font-mono font-bold text-amber-300">{{ le.event_business_id }}</span>
-            <span class="text-white font-semibold ml-2">{{ le.event_type }} ({{ le.channel }})</span>
+            <span class="text-white font-semibold ml-2" title="{{ le.event_type }}">{{ le.event_type | label_event }} ({{ le.channel | label_channel }})</span>
             <div class="text-slate-400 mt-1">
-              Occurred: <span class="font-mono text-emerald-300">{{ le.event_timestamp }}</span> |
-              Ingested: <span class="font-mono text-amber-300">{{ le.ingestion_timestamp }}</span>
+              Event time: <span class="text-emerald-300" title="{{ le.event_timestamp }}">{{ le.event_timestamp | format_ts }}</span> |
+              Received time: <span class="text-amber-300" title="{{ le.ingestion_timestamp }}">{{ le.ingestion_timestamp | format_ts }}</span>
             </div>
           </div>
-          <span class="px-2 py-1 rounded bg-amber-500/20 text-amber-300 font-mono">+{{ le.lag_seconds }}s</span>
+          <span class="px-2 py-1 rounded bg-amber-500/20 text-amber-300 font-mono whitespace-nowrap">+{{ le.lag_seconds }}s</span>
         </div>
+      {% else %}
+        <div class="text-slate-500">No late-arriving events recorded.</div>
       {% endfor %}
     </div>
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-    <h2 class="text-base font-semibold text-white mb-2">ANOM-003: Suppressed Duplicate Conversion Signals</h2>
-    <p class="text-xs text-slate-400 mb-4">Audit log of duplicate purchase events deduplicated against authoritative orders.</p>
+    <h2 class="text-base font-semibold text-white mb-2">Suppressed Duplicate Purchase Signals</h2>
+    <p class="text-xs text-slate-400 mb-4">Audit log of duplicate purchase notifications deduplicated against confirmed orders.</p>
     <div class="space-y-2 text-xs max-h-80 overflow-y-auto">
       {% for ds in exc.duplicate_signals %}
         <div class="p-3 rounded bg-slate-950 border border-slate-800">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-2">
             <span class="font-mono font-bold text-emerald-400">{{ ds.audit_business_id }}</span>
-            <span class="font-mono text-slate-400">{{ ds.occurred_at }}</span>
+            <span class="text-slate-400" title="{{ ds.occurred_at }}">{{ ds.occurred_at | format_ts }}</span>
           </div>
-          <div class="mt-1 text-slate-300 font-mono">
-            Authoritative Order: {{ ds.details.existing_order_business_id }} | Ref: {{ ds.details.source_purchase_reference }} ({{ ds.details.purchase_source }})
+          <div class="mt-1 text-slate-300">
+            Confirmed Order: <span class="font-mono">{{ ds.details.existing_order_business_id }}</span> &bull;
+            Purchase reference: <span class="font-mono">{{ ds.details.source_purchase_reference }}</span> ({{ ds.details.purchase_source | label_source }})
           </div>
         </div>
+      {% else %}
+        <div class="text-slate-500">No duplicate purchase signals recorded.</div>
       {% endfor %}
     </div>
   </div>
 </div>
-{% endblock %}
 
+<details class="bg-slate-900/60 border border-slate-800 rounded-xl px-5 py-3 text-xs text-slate-400">
+  <summary class="cursor-pointer font-medium text-slate-300 hover:text-white select-none">
+    Technical Details (Rule codes, database fields &amp; API endpoint)
+  </summary>
+  <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-1.5 font-mono text-[11px]">
+    <div>Anomaly rule mapping: ANOM-001 (late events) | ANOM-002 (identity conflicts &amp; consent-blocked merges: ID-003/005/006) | ANOM-003 (duplicate purchase signals) | ANOM-004 (bot traffic) | SES-006 (missing client_instance_id)</div>
+    <div>Schema field mapping: event_timestamp &rarr; Event time | ingestion_timestamp &rarr; Received time | client_instance_id &rarr; Client instance | (purchase_source, source_purchase_reference) &rarr; Purchase reference</div>
+    <div>API endpoint: <a href="/api/v1/exceptions" target="_blank" class="text-indigo-400 underline">/api/v1/exceptions</a></div>
+  </div>
+</details>
+{% endblock %}

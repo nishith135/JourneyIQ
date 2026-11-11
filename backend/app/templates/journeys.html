@@ -4,12 +4,12 @@
   <div>
     <h1 class="text-2xl font-bold text-white">Customer Journey Explorer</h1>
     <p class="text-sm text-slate-400 mt-1">
-      Inspect reconstructed multi-session journeys, 7-day attribution outcomes, friction flags, and versioned recalculations.
+      Explore multi-session customer journeys, 7-day conversion paths, journey challenges, and recalculated outcomes.
     </p>
   </div>
   <a href="/journeys/JRN-HERO-001"
      class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow">
-    Open Canonical Hero Journey (JRN-HERO-001) &rarr;
+    Open Sample Journey (JRN-HERO-001) &rarr;
   </a>
 </div>
 
@@ -19,28 +19,28 @@
     <label class="block text-slate-400 mb-1">Outcome Status</label>
     <select name="outcome_status" onchange="this.form.submit()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200">
       <option value="ALL" {% if outcome_status == 'ALL' %}selected{% endif %}>All Outcomes</option>
-      <option value="CONVERTED" {% if outcome_status == 'CONVERTED' %}selected{% endif %}>CONVERTED</option>
-      <option value="IN_PROGRESS" {% if outcome_status == 'IN_PROGRESS' %}selected{% endif %}>IN_PROGRESS (Window Open)</option>
-      <option value="NON_CONVERTED" {% if outcome_status == 'NON_CONVERTED' %}selected{% endif %}>NON_CONVERTED (Expired)</option>
-      <option value="EXCLUDED" {% if outcome_status == 'EXCLUDED' %}selected{% endif %}>EXCLUDED (Bot Traffic)</option>
+      <option value="CONVERTED" {% if outcome_status == 'CONVERTED' %}selected{% endif %}>Converted</option>
+      <option value="IN_PROGRESS" {% if outcome_status == 'IN_PROGRESS' %}selected{% endif %}>In progress (window open)</option>
+      <option value="NON_CONVERTED" {% if outcome_status == 'NON_CONVERTED' %}selected{% endif %}>Did not convert (expired)</option>
+      <option value="EXCLUDED" {% if outcome_status == 'EXCLUDED' %}selected{% endif %}>Excluded (bot traffic)</option>
     </select>
   </div>
 
   <div>
-    <label class="block text-slate-400 mb-1">Friction / Anomaly Flag</label>
+    <label class="block text-slate-400 mb-1">Journey Challenges</label>
     <select name="friction_flag" onchange="this.form.submit()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200">
-      <option value="ALL" {% if friction_flag == 'ALL' %}selected{% endif %}>All Friction Flags</option>
-      <option value="PAYMENT_FAILURE" {% if friction_flag == 'PAYMENT_FAILURE' %}selected{% endif %}>PAYMENT_FAILURE</option>
-      <option value="CHECKOUT_RETRY" {% if friction_flag == 'CHECKOUT_RETRY' %}selected{% endif %}>CHECKOUT_RETRY</option>
-      <option value="SUPPORT_CONTACTED" {% if friction_flag == 'SUPPORT_CONTACTED' %}selected{% endif %}>SUPPORT_CONTACTED (Assisted)</option>
-      <option value="CART_ABANDONED" {% if friction_flag == 'CART_ABANDONED' %}selected{% endif %}>CART_ABANDONED (&ge;24h)</option>
-      <option value="LATE_EVENT" {% if friction_flag == 'LATE_EVENT' %}selected{% endif %}>LATE_EVENT (ANOM-001)</option>
-      <option value="DUPLICATE_SIGNAL" {% if friction_flag == 'DUPLICATE_SIGNAL' %}selected{% endif %}>DUPLICATE_SIGNAL (ANOM-003)</option>
+      <option value="ALL" {% if friction_flag == 'ALL' %}selected{% endif %}>All Journey Challenges</option>
+      <option value="PAYMENT_FAILURE" {% if friction_flag == 'PAYMENT_FAILURE' %}selected{% endif %}>Payment failed</option>
+      <option value="CHECKOUT_RETRY" {% if friction_flag == 'CHECKOUT_RETRY' %}selected{% endif %}>Checkout retried</option>
+      <option value="SUPPORT_CONTACTED" {% if friction_flag == 'SUPPORT_CONTACTED' %}selected{% endif %}>Support contacted</option>
+      <option value="CART_ABANDONED" {% if friction_flag == 'CART_ABANDONED' %}selected{% endif %}>Cart abandoned (&ge;24h)</option>
+      <option value="LATE_EVENT" {% if friction_flag == 'LATE_EVENT' %}selected{% endif %}>Late-arriving event</option>
+      <option value="DUPLICATE_SIGNAL" {% if friction_flag == 'DUPLICATE_SIGNAL' %}selected{% endif %}>Duplicate signal suppressed</option>
     </select>
   </div>
 
   <div>
-    <label class="block text-slate-400 mb-1">Search ID / Customer / Anonymous</label>
+    <label class="block text-slate-400 mb-1">Search Journey, Customer, or Anonymous ID</label>
     <input type="text" name="search" value="{{ search }}" placeholder="e.g. JRN-HERO-001, CUS-0001..."
            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-500" />
   </div>
@@ -54,7 +54,7 @@
 </form>
 
 <!-- Journeys Table -->
-<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-6">
   <div class="px-4 sm:px-6 py-3.5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-400">
     <span class="tabular-nums">
       {% if total_count > 0 %}
@@ -63,20 +63,20 @@
         Showing <strong class="text-white">0</strong> of <strong class="text-white">0</strong> journeys
       {% endif %}
     </span>
-    <span>Click any journey ID to inspect its full event timeline, payment attempts, support history, and consent audit.</span>
+    <span>Click any journey ID to inspect its event timeline, payment attempts, support history, and consent record.</span>
   </div>
   <div class="overflow-x-auto">
     <table class="w-full text-left border-collapse text-sm">
       <thead>
         <tr class="border-b border-slate-800 bg-slate-950/60 text-xs uppercase text-slate-400">
           <th class="py-3 px-4">Journey ID</th>
-          <th class="py-3 px-4">Subject (Customer / Anon)</th>
+          <th class="py-3 px-4">Customer</th>
           <th class="py-3 px-4">Channels</th>
-          <th class="py-3 px-4">Outcome Status</th>
-          <th class="py-3 px-4">Attribution</th>
-          <th class="py-3 px-4">Friction Flags</th>
-          <th class="py-3 px-4 text-right">Confirmed Rev</th>
-          <th class="py-3 px-4 text-right">Calc Ver</th>
+          <th class="py-3 px-4">Outcome</th>
+          <th class="py-3 px-4">Conversion Path</th>
+          <th class="py-3 px-4">Journey Challenges</th>
+          <th class="py-3 px-4 text-right">Revenue</th>
+          <th class="py-3 px-4 text-right">Calculation Version</th>
           <th class="py-3 px-4 text-right">Action</th>
         </tr>
       </thead>
@@ -93,48 +93,50 @@
               <div class="font-medium text-white">{{ j.customer_business_id }}</div>
               <div class="text-slate-500">{{ j.customer_email }}</div>
             {% else %}
-              <div class="font-mono text-slate-400">{{ j.anonymous_id }}</div>
-              <div class="text-slate-600">Unstitched / Anonymous</div>
+              <div class="font-mono text-slate-300">{{ j.anonymous_id }}</div>
+              <div class="text-slate-500">Anonymous visitor</div>
             {% endif %}
           </td>
           <td class="py-3.5 px-4 text-xs">
             {% for ch in j.channels %}
-              <span class="inline-block px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono mr-1">{{ ch }}</span>
+              <span class="inline-block px-2 py-0.5 rounded bg-slate-800 text-slate-200 font-medium mr-1" title="{{ ch }}">{{ ch | label_channel }}</span>
             {% endfor %}
-            <span class="text-slate-500">({{ j.session_count }} sess)</span>
+            <span class="text-slate-500">({{ j.session_count }} {{ 'session' if j.session_count == 1 else 'sessions' }})</span>
           </td>
           <td class="py-3.5 px-4 text-xs font-semibold">
             {% if j.outcome_status == 'CONVERTED' %}
-              <span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">CONVERTED</span>
+              <span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap" title="{{ j.outcome_status }}">{{ j.outcome_status | label_outcome }}</span>
             {% elif j.outcome_status == 'IN_PROGRESS' %}
-              <span class="px-2.5 py-1 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">IN_PROGRESS</span>
+              <span class="px-2.5 py-1 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 whitespace-nowrap" title="{{ j.outcome_status }}">{{ j.outcome_status | label_outcome }}</span>
             {% elif j.outcome_status == 'EXCLUDED' %}
-              <span class="px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">EXCLUDED</span>
+              <span class="px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 whitespace-nowrap" title="{{ j.outcome_status }}">{{ j.outcome_status | label_outcome }}</span>
             {% else %}
-              <span class="px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">NON_CONVERTED</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap" title="{{ j.outcome_status }}">{{ j.outcome_status | label_outcome }}</span>
             {% endif %}
           </td>
           <td class="py-3.5 px-4 text-xs">
-            <span class="font-mono text-slate-300">{{ j.attribution_status }}</span>
+            <div class="font-medium text-slate-200" title="{{ j.attribution_status }}">
+              {{ j.attribution_status | label_attribution }}
+            </div>
             {% if j.outcome_reason %}
-              <div class="text-[11px] text-slate-500">{{ j.outcome_reason }}</div>
+              <div class="text-[11px] text-slate-400" title="{{ j.outcome_reason }}">{{ j.outcome_reason | label_reason }}</div>
             {% endif %}
           </td>
           <td class="py-3.5 px-4 text-xs">
             {% if j.friction_flags %}
               <div class="flex flex-wrap gap-1">
                 {% for flg in j.friction_flags %}
-                  <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono text-[11px]">{{ flg }}</span>
+                  <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px]" title="{{ flg }}">{{ flg | label_friction }}</span>
                 {% endfor %}
               </div>
             {% else %}
               <span class="text-slate-600">None</span>
             {% endif %}
           </td>
-          <td class="py-3.5 px-4 text-right font-mono text-slate-200">${{ "{:,.2f}".format(j.confirmed_revenue) }}</td>
+          <td class="py-3.5 px-4 text-right font-mono tabular-nums text-slate-200">${{ "{:,.2f}".format(j.confirmed_revenue) }}</td>
           <td class="py-3.5 px-4 text-right font-mono text-xs text-slate-400">{{ j.calculation_version }}</td>
           <td class="py-3.5 px-4 text-right">
-            <a href="/journeys/{{ j.journey_business_id }}" class="px-3 py-1.5 rounded bg-slate-800 hover:bg-indigo-600 text-xs text-white transition">
+            <a href="/journeys/{{ j.journey_business_id }}" class="px-3 py-1.5 rounded bg-slate-800 hover:bg-indigo-600 text-xs text-white transition whitespace-nowrap">
               Timeline &rarr;
             </a>
           </td>
@@ -193,5 +195,14 @@
     </div>
   </nav>
 </div>
-{% endblock %}
 
+<details class="bg-slate-900/60 border border-slate-800 rounded-xl px-5 py-3 text-xs text-slate-400">
+  <summary class="cursor-pointer font-medium text-slate-300 hover:text-white select-none">
+    Technical Details (Filter parameters &amp; API endpoint)
+  </summary>
+  <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-1 font-mono text-[11px]">
+    <div>Outcome enums: CONVERTED, IN_PROGRESS, NON_CONVERTED, EXCLUDED | Challenge enums: PAYMENT_FAILURE, CHECKOUT_RETRY, SUPPORT_CONTACTED, CART_ABANDONED, LATE_EVENT, DUPLICATE_SIGNAL</div>
+    <div>API endpoint: <a href="/api/v1/journeys" target="_blank" class="text-indigo-400 underline">/api/v1/journeys</a></div>
+  </div>
+</details>
+{% endblock %}

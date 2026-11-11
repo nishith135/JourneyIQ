@@ -694,7 +694,9 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
 
         r_dash_ui = client.get("/dashboard")
         assert r_dash_ui.status_code == 200
-        assert "Executive Journey" in r_dash_ui.text
+        assert "Customer Journey &amp; Conversion Overview" in r_dash_ui.text
+        assert "Data Quality" in r_dash_ui.text
+        assert "Data Quality Guardrails" not in r_dash_ui.text
 
         # 3. Funnels API & View
         r_fun_api = client.get("/api/v1/funnels?channel=WEB&exclude_bots=true")
@@ -703,6 +705,7 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
 
         r_fun_ui = client.get("/funnels")
         assert r_fun_ui.status_code == 200
+        assert "Stage Reach" in r_fun_ui.text
         assert "Strict Sequential Progression" in r_fun_ui.text
 
         # 4. Canonical 10-Step Hero Journey (JRN-HERO-001) Verification (SUCCESS_CRITERIA.md Sec 16)
@@ -723,7 +726,14 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
         r_hero_ui = client.get("/journeys/JRN-HERO-001")
         assert r_hero_ui.status_code == 200
         assert "JRN-HERO-001" in r_hero_ui.text
-        assert "CARD_DECLINED_3DS_TIMEOUT" in r_hero_ui.text
+        assert "Support-assisted conversion" in r_hero_ui.text
+        assert "Card declined (3DS timeout)" in r_hero_ui.text
+        assert "Session started" in r_hero_ui.text
+        assert "Added to cart" in r_hero_ui.text
+        assert "Purchase completed" in r_hero_ui.text
+        assert "Event Time" in r_hero_ui.text
+        assert "Received Time" in r_hero_ui.text
+        assert "CARD_DECLINED_3DS_TIMEOUT" in r_hero_ui.text  # preserved in Technical Details / attributes
 
         # 5. Versioned Recalculation API on JRN-0001 (in journeyiq_test only)
         r_recalc = client.post("/api/v1/journeys/JRN-0001/recalculate")
@@ -741,7 +751,9 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
 
         r_exc_ui = client.get("/exceptions")
         assert r_exc_ui.status_code == 200
-        assert "ANOM-001" in r_exc_ui.text
+        assert "Data Quality &amp; Exceptions" in r_exc_ui.text
+        assert "Identity merge blocked" in r_exc_ui.text
+        assert "ANOM-001" in r_exc_ui.text  # preserved inside Technical Details disclosure
 
         # 7. Experiments API & View
         r_exp_api = client.get("/api/v1/experiments")
@@ -751,6 +763,8 @@ def test_data_008_reproducibility_and_full_e2e_application() -> None:
         r_exp_ui = client.get("/experiments")
         assert r_exp_ui.status_code == 200
         assert "EXP-CHECKOUT-001" in r_exp_ui.text
+        assert "Assigned Participants" in r_exp_ui.text
+        assert "Exposed Participants" in r_exp_ui.text
     finally:
         app.dependency_overrides.clear()
 
@@ -868,5 +882,91 @@ def test_journeys_pagination_and_filter_preservation(db_session: Session) -> Non
         assert r_empty.status_code == 200
         assert "No journeys matched the selected filters." in r_empty.text
         assert 'Page <strong class="text-white">1</strong> of <strong class="text-white">1</strong>' in r_empty.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_quarantine_resolution_validation_and_responsive_header(db_session: Session) -> None:
+    """
+    Verify /api/v1/exceptions/quarantine/{id}/resolve and /exceptions/quarantine/{id}/resolve-ui
+    validate malformed UUIDs, missing records, and invalid statuses safely on journeyiq_test,
+    and verify base.html renders responsive wrapping header markup.
+    """
+    from app.models.entities import EventQuarantine
+
+    assert_safe_test_session(db_session)
+    t0 = datetime(2026, 11, 1, 10, 0, 0, tzinfo=timezone.utc)
+    q = EventQuarantine(
+        quarantine_id=uuid.uuid4(),
+        quarantine_business_id="QUAR-TEST-001",
+        issue_type="UNAUTHORIZED_IDENTITY_MERGE",
+        reason="Synthetic quarantine item for resolution validation test",
+        detected_at=t0,
+        resolution_status="OPEN",
+    )
+    db_session.add(q)
+    db_session.commit()
+
+    def _override_get_db():
+        with TestSessionLocal() as test_db:
+            yield test_db
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        client = TestClient(app)
+
+        # Malformed UUID -> 400 on API, 303 safe error redirect on UI (no 500 crash)
+        r_bad_api = client.post(
+            "/api/v1/exceptions/quarantine/not-a-uuid/resolve",
+            json={"resolution_status": "RESOLVED", "resolution_notes": "ok"},
+        )
+        assert r_bad_api.status_code == 400
+
+        r_bad_ui = client.post(
+            "/exceptions/quarantine/not-a-uuid/resolve-ui",
+            data={"resolution_status": "RESOLVED", "resolution_notes": "ok"},
+            follow_redirects=True,
+        )
+        assert r_bad_ui.status_code == 200
+        assert "Invalid quarantine UUID." in r_bad_ui.text
+        assert "bg-rose-500/20" in r_bad_ui.text
+
+        # Missing UUID -> 404 on API, 303 error redirect on UI
+        missing_id = str(uuid.uuid4())
+        r_missing_api = client.post(
+            f"/api/v1/exceptions/quarantine/{missing_id}/resolve",
+            json={"resolution_status": "RESOLVED", "resolution_notes": "ok"},
+        )
+        assert r_missing_api.status_code == 404
+
+        r_missing_ui = client.post(
+            f"/exceptions/quarantine/{missing_id}/resolve-ui",
+            data={"resolution_status": "RESOLVED", "resolution_notes": "ok"},
+            follow_redirects=True,
+        )
+        assert r_missing_ui.status_code == 200
+        assert "Quarantine record not found." in r_missing_ui.text
+
+        # Invalid resolution_status -> 400 on API, 303 error redirect on UI without mutating DB
+        r_status_ui = client.post(
+            f"/exceptions/quarantine/{q.quarantine_id}/resolve-ui",
+            data={"resolution_status": "BOGUS_STATUS", "resolution_notes": "hack"},
+            follow_redirects=True,
+        )
+        assert r_status_ui.status_code == 200
+        assert "Invalid resolution_status." in r_status_ui.text
+
+        db_session.expire_all()
+        assert db_session.get(EventQuarantine, q.quarantine_id).resolution_status == "OPEN"
+
+        # Valid resolution works on UI and verifies responsive header classes render
+        r_ok_ui = client.post(
+            f"/exceptions/quarantine/{q.quarantine_id}/resolve-ui",
+            data={"resolution_status": "RESOLVED", "resolution_notes": "Reviewed cleanly"},
+            follow_redirects=True,
+        )
+        assert r_ok_ui.status_code == 200
+        assert "Updated quarantine item to RESOLVED" in r_ok_ui.text
+        assert "flex-wrap" in r_ok_ui.text
     finally:
         app.dependency_overrides.clear()

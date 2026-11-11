@@ -3,7 +3,7 @@
 <div class="mb-8">
   <h1 class="text-2xl font-bold text-white">Experimentation &amp; Variant Lift Analytics</h1>
   <p class="text-sm text-slate-400 mt-1">
-    Deterministic SHA-256 bucketing (<code class="text-slate-200">EXP-005</code>), strict separation of <strong>Assigned</strong> vs. <strong>Exposed</strong> subjects (<code class="text-slate-200">EXP-007/008</code>), and pause enforcement (<code class="text-slate-200">EXP-006</code>).
+    Deterministic participant assignment, separate reporting for <strong>Assigned</strong> vs. <strong>Exposed</strong> participants, and pause guardrails.
   </p>
 </div>
 
@@ -11,15 +11,14 @@
 <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-8">
   <div class="px-6 py-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
     <div>
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         <span class="font-mono text-xs text-indigo-400">{{ exp.experiment_business_id }}</span>
-        <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold {% if exp.status == 'RUNNING' %}bg-emerald-500/20 text-emerald-300 border border-emerald-500/30{% else %}bg-amber-500/20 text-amber-300 border border-amber-500/30{% endif %}">
-          {{ exp.status }}
+        <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold {% if exp.status == 'RUNNING' %}bg-emerald-500/20 text-emerald-300 border border-emerald-500/30{% else %}bg-amber-500/20 text-amber-300 border border-amber-500/30{% endif %}" title="{{ exp.status }}">
+          {{ exp.status | label_status }}
         </span>
-        <span class="text-xs text-slate-500 font-mono">Config v{{ exp.config_version }} | Salt: {{ exp.experiment_salt }}</span>
       </div>
       <h2 class="text-lg font-bold text-white mt-1">{{ exp.name }}</h2>
-      <p class="text-xs text-slate-400 mt-0.5">{{ exp.description }} (Primary Metric: <code class="text-slate-200">{{ exp.primary_metric }}</code>)</p>
+      <p class="text-xs text-slate-400 mt-0.5">{{ exp.description }} &bull; Primary metric: <strong class="text-slate-200">{{ exp.primary_metric | label_metric }}</strong></p>
     </div>
   </div>
 
@@ -29,8 +28,8 @@
         <tr class="border-b border-slate-800 bg-slate-950/60 text-xs uppercase text-slate-400">
           <th class="py-3.5 px-6">Variant</th>
           <th class="py-3.5 px-4 text-right">Allocation %</th>
-          <th class="py-3.5 px-4 text-right">Assigned Subjects</th>
-          <th class="py-3.5 px-4 text-right">Exposed Subjects (First)</th>
+          <th class="py-3.5 px-4 text-right">Assigned Participants</th>
+          <th class="py-3.5 px-4 text-right">Exposed Participants</th>
           <th class="py-3.5 px-4 text-right">Unexposed Assigned</th>
           <th class="py-3.5 px-4 text-right border-l border-slate-800">Assigned Conv %</th>
           <th class="py-3.5 px-4 text-right">Exposed Conv %</th>
@@ -45,25 +44,25 @@
             <div class="font-semibold text-white flex items-center gap-2">
               <span>{{ v.variant_name }}</span>
               {% if v.is_control %}
-                <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px] font-mono">CONTROL</span>
+                <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px] font-medium">Control</span>
               {% else %}
-                <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[11px] font-mono">TREATMENT</span>
+                <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[11px] font-medium">Treatment</span>
               {% endif %}
             </div>
             <div class="text-xs font-mono text-slate-500">{{ v.variant_business_id }}</div>
           </td>
-          <td class="py-4 px-4 text-right font-mono text-slate-300">{{ "{:.2f}".format(v.allocation_percentage) }}%</td>
-          <td class="py-4 px-4 text-right font-semibold text-white">{{ v.assigned_count }}</td>
-          <td class="py-4 px-4 text-right font-semibold text-indigo-300">{{ v.exposed_count }} ({{ v.exposure_rate_pct }}%)</td>
-          <td class="py-4 px-4 text-right text-slate-400">{{ v.unexposed_count }}</td>
-          <td class="py-4 px-4 text-right text-slate-300 border-l border-slate-800">
+          <td class="py-4 px-4 text-right font-mono tabular-nums text-slate-300">{{ "{:.2f}".format(v.allocation_percentage) }}%</td>
+          <td class="py-4 px-4 text-right font-semibold tabular-nums text-white">{{ v.assigned_count }}</td>
+          <td class="py-4 px-4 text-right font-semibold tabular-nums text-indigo-300">{{ v.exposed_count }} ({{ v.exposure_rate_pct }}%)</td>
+          <td class="py-4 px-4 text-right tabular-nums text-slate-400">{{ v.unexposed_count }}</td>
+          <td class="py-4 px-4 text-right tabular-nums text-slate-300 border-l border-slate-800">
             {{ v.assigned_conversion_rate_pct }}% <span class="text-xs text-slate-500">({{ v.assigned_conversions }})</span>
           </td>
-          <td class="py-4 px-4 text-right font-bold text-emerald-400">
+          <td class="py-4 px-4 text-right font-bold tabular-nums text-emerald-400">
             {{ v.exposed_conversion_rate_pct }}% <span class="text-xs text-slate-400">({{ v.exposed_conversions }})</span>
           </td>
-          <td class="py-4 px-4 text-right font-mono text-white">${{ "{:,.2f}".format(v.exposed_revenue) }}</td>
-          <td class="py-4 px-6 text-right font-mono font-bold">
+          <td class="py-4 px-4 text-right font-mono tabular-nums text-white">${{ "{:,.2f}".format(v.exposed_revenue) }}</td>
+          <td class="py-4 px-6 text-right font-mono tabular-nums font-bold">
             {% if v.is_control %}
               <span class="text-slate-500">Baseline</span>
             {% elif v.lift_vs_control_pct is not none %}
@@ -79,7 +78,19 @@
       </tbody>
     </table>
   </div>
+
+  <details class="border-t border-slate-800 bg-slate-950/40 px-6 py-3 text-xs text-slate-400">
+    <summary class="cursor-pointer font-medium text-slate-300 hover:text-white select-none">
+      Technical Details (Bucketing salt, config version &amp; metric key)
+    </summary>
+    <div class="mt-2 pt-2 border-t border-slate-800/80 font-mono text-[11px]">
+      Experiment: {{ exp.experiment_business_id }} | Config v{{ exp.config_version }} | Salt: {{ exp.experiment_salt }} | Metric key: {{ exp.primary_metric }} | Rules: EXP-005 (SHA-256 bucketing), EXP-006 (pause guard), EXP-007/008 (assigned vs. exposed)
+    </div>
+  </details>
+</div>
+{% else %}
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center text-sm text-slate-400">
+  No experiments configured.
 </div>
 {% endfor %}
 {% endblock %}
-

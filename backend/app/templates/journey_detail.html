@@ -5,7 +5,7 @@
 
 {% if banner_msg %}
 <div class="mb-6 p-4 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-sm flex items-center justify-between">
-  <span><strong>Action Completed:</strong> {{ banner_msg }}</span>
+  <span><strong>Updated:</strong> {{ banner_msg }}</span>
   <a href="/journeys/{{ j.journey_business_id }}" class="text-xs underline text-indigo-300">Dismiss</a>
 </div>
 {% endif %}
@@ -13,70 +13,75 @@
 <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
   <div>
     <div class="flex items-center gap-3">
-      <a href="/journeys" class="text-xs text-slate-400 hover:text-white">&larr; Back to Journeys</a>
-      <span class="text-slate-700">|</span>
-      <span class="font-mono text-xs text-indigo-400">Identity Version: v{{ j.identity_version }}</span>
+      <a href="/journeys" class="text-xs text-slate-400 hover:text-white">&larr; Back to Customer Journeys</a>
     </div>
     <h1 class="text-2xl font-bold text-white mt-1">
-      Journey Traceability: <span class="font-mono text-indigo-400">{{ j.journey_business_id }}</span>
+      Customer Journey: <span class="font-mono text-indigo-400">{{ j.journey_business_id }}</span>
     </h1>
     <p class="text-xs text-slate-400 mt-1">
-      7-Day Attribution Window: <span class="font-mono text-slate-300">{{ j.first_touch_at }}</span> &rarr; <span class="font-mono text-slate-300">{{ j.window_end_at }}</span>
+      7-Day Attribution Window: <span class="text-slate-200">{{ j.first_touch_at | format_ts }}</span> &rarr; <span class="text-slate-200">{{ j.window_end_at | format_ts }}</span>
     </p>
   </div>
 
-  <!-- Live Interactive Demo Controls (ID-008/009, OUT-007/010) -->
+  <!-- Journey Actions -->
   <div class="flex flex-wrap items-center gap-2">
     <form method="post" action="/journeys/{{ j.journey_business_id }}/recalculate-ui">
       <button type="submit" class="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow">
-        Recalculate Outcome (New Version)
+        Recalculate Outcome
       </button>
     </form>
     {% if j.customer_id %}
     <form method="post" action="/journeys/{{ j.journey_business_id }}/withdraw-consent-ui">
       <button type="submit" class="px-3.5 py-2 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-semibold shadow">
-        Simulate Consent Withdrawal (ID-008)
+        Withdraw Consent &amp; Recalculate
       </button>
     </form>
     {% endif %}
-    <a href="/api/v1/journeys/{{ j.journey_business_id }}" target="_blank" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">
-      Raw JSON
-    </a>
   </div>
 </div>
 
 <!-- Top Summary Cards -->
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs text-slate-400 uppercase">Current Versioned Outcome</div>
+    <div class="text-xs text-slate-400 uppercase">Current Outcome</div>
     {% if out %}
-      <div class="mt-2 flex items-center gap-2">
-        <span class="text-xl font-bold text-emerald-400">{{ out.outcome_status }}</span>
-        <span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-mono text-slate-300">{{ out.attribution_status }}</span>
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <span class="text-xl font-bold {% if out.outcome_status == 'CONVERTED' %}text-emerald-400{% elif out.outcome_status == 'EXCLUDED' %}text-rose-400{% else %}text-white{% endif %}" title="{{ out.outcome_status }}">
+          {{ out.outcome_status | label_outcome }}
+        </span>
+        <span class="px-2 py-0.5 rounded bg-slate-800 text-xs text-slate-200" title="{{ out.attribution_status }}">
+          {{ out.attribution_status | label_attribution }}
+        </span>
         <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-xs font-mono">{{ out.calculation_version }}</span>
       </div>
-      <div class="mt-2 text-xs text-slate-400">Reason: <span class="font-mono text-slate-200">{{ out.outcome_reason }}</span></div>
+      <div class="mt-2 text-xs text-slate-400">
+        Conversion Path: <span class="text-slate-200" title="{{ out.outcome_reason }}">{{ out.outcome_reason | label_reason }}</span>
+      </div>
       <div class="mt-2 flex flex-wrap gap-1">
         {% for flg in out.friction_flags %}
-          <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono text-[11px]">{{ flg }}</span>
+          <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px]" title="{{ flg }}">{{ flg | label_friction }}</span>
         {% endfor %}
       </div>
     {% endif %}
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="text-xs text-slate-400 uppercase">Subject &amp; Consent State</div>
+    <div class="text-xs text-slate-400 uppercase">Customer &amp; Consent</div>
     <div class="mt-2 text-sm">
-      <div>Customer: <strong class="text-white font-mono">{{ j.customer_business_id or 'None (Anonymous)' }}</strong></div>
+      <div>Customer: <strong class="text-white">{{ j.customer_business_id or 'Anonymous visitor' }}</strong></div>
       {% if j.customer_email %}<div class="text-xs text-slate-400">{{ j.customer_email }}</div>{% endif %}
-      <div class="mt-1 text-xs text-slate-400">Anonymous ID: <span class="font-mono text-slate-200">{{ j.anonymous_id or 'N/A' }}</span></div>
+      <div class="mt-1 text-xs text-slate-400">Anonymous Visitor ID: <span class="font-mono text-slate-200">{{ j.anonymous_id or 'None' }}</span></div>
     </div>
-    <div class="mt-3 pt-2 border-t border-slate-800 text-xs">
+    <div class="mt-3 pt-2 border-t border-slate-800 text-xs space-y-1">
       {% for c in detail.consents %}
         <div class="flex justify-between">
-          <span class="font-mono text-slate-400">{{ c.consent_business_id }}</span>
-          <span class="font-semibold {% if c.consent_status == 'GRANTED' %}text-emerald-400{% else %}text-rose-400{% endif %}">{{ c.consent_status }}</span>
+          <span class="text-slate-400">Tracking consent ({{ c.consent_business_id }})</span>
+          <span class="font-semibold {% if c.consent_status == 'GRANTED' %}text-emerald-400{% else %}text-rose-400{% endif %}" title="{{ c.consent_status }}">
+            {{ c.consent_status | label_status }}
+          </span>
         </div>
+      {% else %}
+        <div class="text-slate-500">No consent records on file.</div>
       {% endfor %}
     </div>
   </div>
@@ -85,17 +90,17 @@
     <div class="text-xs text-slate-400 uppercase">Identity Links ({{ detail.identity_links | length }})</div>
     <div class="mt-2 space-y-2 text-xs">
       {% for l in detail.identity_links %}
-        <div class="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
+        <div class="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
           <div>
             <div class="font-mono text-slate-200">{{ l.anonymous_id }} &rarr; {{ j.customer_business_id }}</div>
-            <div class="text-slate-500">{{ l.link_method }}</div>
+            <div class="text-slate-400">{{ l.link_method | label_link_method }}</div>
           </div>
-          <span class="px-2 py-0.5 rounded font-semibold {% if l.status == 'ACTIVE' %}bg-emerald-500/20 text-emerald-300{% else %}bg-rose-500/20 text-rose-300{% endif %}">
-            {{ l.status }}
+          <span class="px-2 py-0.5 rounded font-semibold {% if l.status == 'ACTIVE' %}bg-emerald-500/20 text-emerald-300{% else %}bg-rose-500/20 text-rose-300{% endif %}" title="{{ l.status }}">
+            {{ l.status | label_status }}
           </span>
         </div>
       {% else %}
-        <div class="text-slate-500">No IdentityLink records on this journey.</div>
+        <div class="text-slate-500">No linked customer profiles on this journey.</div>
       {% endfor %}
     </div>
   </div>
@@ -103,10 +108,10 @@
 
 <!-- Sessions & Chronological Event Stream -->
 <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-8">
-  <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+  <div class="px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
     <div>
-      <h2 class="text-base font-semibold text-white">Reconstructed Chronological Event Stream (Ordered by event_timestamp)</h2>
-      <p class="text-xs text-slate-400">Late-arriving events (ANOM-001) are highlighted where ingestion_timestamp lagged behind occurrence time.</p>
+      <h2 class="text-base font-semibold text-white">Journey Event Timeline (Ordered by Event Time)</h2>
+      <p class="text-xs text-slate-400">Events ordered chronologically by Event time. Late-arriving events whose Received time lagged behind Event time are highlighted.</p>
     </div>
     <span class="text-xs text-slate-400">{{ detail.events | length }} events across {{ detail.sessions | length }} session(s)</span>
   </div>
@@ -115,30 +120,37 @@
       <thead>
         <tr class="border-b border-slate-800 bg-slate-950/60 uppercase text-slate-400">
           <th class="py-3 px-4">Event ID</th>
-          <th class="py-3 px-4">Event Type</th>
-          <th class="py-3 px-4">Channel / Client ID</th>
-          <th class="py-3 px-4">Event Timestamp (UTC)</th>
-          <th class="py-3 px-4">Ingestion Timestamp (UTC)</th>
-          <th class="py-3 px-4">Anomaly / Properties</th>
+          <th class="py-3 px-4">Event</th>
+          <th class="py-3 px-4">Channel &amp; Client Instance</th>
+          <th class="py-3 px-4">Event Time</th>
+          <th class="py-3 px-4">Received Time</th>
+          <th class="py-3 px-4">Delivery Status</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/70">
         {% for e in detail.events %}
         <tr class="hover:bg-slate-800/40 {% if e.late_arrival_detected %}bg-amber-950/25{% endif %}">
           <td class="py-3 px-4 font-mono text-indigo-300">{{ e.event_business_id }}</td>
-          <td class="py-3 px-4 font-semibold text-white">{{ e.event_type }}</td>
-          <td class="py-3 px-4 font-mono text-slate-300">{{ e.channel }} / {{ e.client_instance_id }}</td>
-          <td class="py-3 px-4 font-mono text-emerald-300">{{ e.event_timestamp }}</td>
-          <td class="py-3 px-4 font-mono text-slate-400">{{ e.ingestion_timestamp }}</td>
+          <td class="py-3 px-4 font-semibold text-white" title="{{ e.event_type }}">{{ e.event_type | label_event }}</td>
+          <td class="py-3 px-4 text-slate-300">
+            <span>{{ e.channel | label_channel }}</span>
+            <span class="font-mono text-slate-500 ml-1">({{ e.client_instance_id }})</span>
+          </td>
+          <td class="py-3 px-4 text-emerald-300 whitespace-nowrap" title="{{ e.event_timestamp }}">{{ e.event_timestamp | format_ts }}</td>
+          <td class="py-3 px-4 text-slate-400 whitespace-nowrap" title="{{ e.ingestion_timestamp }}">{{ e.ingestion_timestamp | format_ts }}</td>
           <td class="py-3 px-4">
             {% if e.late_arrival_detected %}
               <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
-                ANOM-001 Late Arrival (+{{ e.ingestion_lag_seconds }}s lag)
+                Late-arriving event (+{{ e.ingestion_lag_seconds }}s)
               </span>
             {% else %}
-              <span class="text-slate-500">On-time</span>
+              <span class="text-slate-500">On time</span>
             {% endif %}
           </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="py-8 px-4 text-center text-slate-500">No events recorded for this journey.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -147,20 +159,20 @@
 </div>
 
 <!-- Orders, Payment Attempts & Support Tickets -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-    <h2 class="text-base font-semibold text-white mb-3">Orders &amp; Sequential Payment Attempts (ORD-001–006)</h2>
+    <h2 class="text-base font-semibold text-white mb-3">Orders &amp; Payment Attempts</h2>
     {% for o in detail.orders %}
       <div class="p-4 rounded-lg bg-slate-950 border border-slate-800 mb-4">
         <div class="flex items-center justify-between">
           <span class="font-mono font-bold text-white">{{ o.order_business_id }}</span>
-          <span class="px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs font-semibold">{{ o.status }}</span>
+          <span class="px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs font-semibold" title="{{ o.status }}">{{ o.status | label_status }}</span>
         </div>
         <div class="mt-2 text-xs text-slate-400 grid grid-cols-2 gap-2">
-          <div>Authoritative Ref: <span class="font-mono text-slate-200">{{ o.source_purchase_reference }}</span></div>
-          <div>Source: <span class="font-mono text-slate-200">{{ o.purchase_source }}</span></div>
+          <div>Purchase reference: <span class="font-mono text-slate-200">{{ o.source_purchase_reference }}</span></div>
+          <div>Checkout channel: <span class="text-slate-200">{{ o.purchase_source | label_source }}</span></div>
           <div>Subtotal: <span class="font-mono text-slate-200">${{ "{:,.2f}".format(o.subtotal) }}</span></div>
-          <div>Total (incl. tax): <strong class="font-mono text-emerald-400">${{ "{:,.2f}".format(o.total_amount) }}</strong></div>
+          <div>Revenue (incl. tax): <strong class="font-mono text-emerald-400">${{ "{:,.2f}".format(o.total_amount) }}</strong></div>
         </div>
       </div>
     {% else %}
@@ -168,19 +180,20 @@
     {% endfor %}
 
     {% if detail.payment_attempts %}
-      <h3 class="text-xs font-semibold uppercase text-slate-400 mt-4 mb-2">Payment Attempts History</h3>
+      <h3 class="text-xs font-semibold uppercase text-slate-400 mt-4 mb-2">Payment Attempt History</h3>
       <div class="space-y-2 text-xs">
         {% for pa in detail.payment_attempts %}
-          <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
+          <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
             <div>
-              <span class="font-mono font-semibold text-white">#{{ pa.attempt_number }} ({{ pa.payment_attempt_business_id }})</span>
-              <div class="text-slate-500">{{ pa.attempted_at }} | Ref: {{ pa.provider_reference }}</div>
+              <span class="font-semibold text-white">Attempt #{{ pa.attempt_number }}</span>
+              <span class="font-mono text-slate-400 ml-1">({{ pa.payment_attempt_business_id }})</span>
+              <div class="text-slate-500">{{ pa.attempted_at | format_ts }} &bull; Ref: {{ pa.provider_reference }}</div>
               {% if pa.failure_reason %}
-                <div class="text-rose-400 font-mono mt-0.5">Failure Reason: {{ pa.failure_reason }}</div>
+                <div class="text-rose-400 mt-0.5" title="{{ pa.failure_reason }}">Reason: {{ pa.failure_reason | label_failure }}</div>
               {% endif %}
             </div>
-            <span class="px-2.5 py-1 rounded font-bold {% if pa.status == 'SUCCEEDED' %}bg-emerald-500/20 text-emerald-300{% else %}bg-rose-500/20 text-rose-300{% endif %}">
-              {{ pa.status }} (${{ "{:,.2f}".format(pa.amount) }})
+            <span class="px-2.5 py-1 rounded font-bold whitespace-nowrap {% if pa.status == 'SUCCEEDED' %}bg-emerald-500/20 text-emerald-300{% else %}bg-rose-500/20 text-rose-300{% endif %}" title="{{ pa.status }}">
+              {{ pa.status | label_status }} (${{ "{:,.2f}".format(pa.amount) }})
             </span>
           </div>
         {% endfor %}
@@ -189,19 +202,19 @@
   </div>
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-    <h2 class="text-base font-semibold text-white mb-3">Linked Support Tickets &amp; Outcome Version History</h2>
+    <h2 class="text-base font-semibold text-white mb-3">Support History &amp; Calculation Versions</h2>
     {% for t in detail.support_tickets %}
       <div class="p-4 rounded-lg bg-slate-950 border border-slate-800 mb-4 text-xs">
         <div class="flex items-center justify-between">
-          <span class="font-mono font-bold text-indigo-300">{{ t.ticket_business_id }} ({{ t.issue_type }})</span>
-          <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold">{{ t.status }}</span>
+          <span class="font-semibold text-indigo-300">{{ t.ticket_business_id }} &mdash; {{ t.issue_type | label_ticket_issue }}</span>
+          <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold" title="{{ t.status }}">{{ t.status | label_status }}</span>
         </div>
-        <div class="text-slate-400 mt-1">Opened: {{ t.created_at }} | Channel: {{ t.support_channel }}</div>
+        <div class="text-slate-400 mt-1">Opened: {{ t.created_at | format_ts }} &bull; Channel: {{ t.support_channel | label_channel }}</div>
         <div class="mt-3 space-y-1.5 border-l-2 border-indigo-500/40 pl-3">
           {% for te in t.events %}
             <div>
-              <span class="font-mono text-slate-300">{{ te.previous_status }} &rarr; {{ te.new_status }}</span>
-              <span class="text-slate-500 ml-2">({{ te.event_timestamp }})</span>
+              <span class="text-slate-200 font-medium">{{ te.previous_status | label_status }} &rarr; {{ te.new_status | label_status }}</span>
+              <span class="text-slate-500 ml-2">({{ te.event_timestamp | format_ts }})</span>
               <div class="text-slate-400">{{ te.notes }}</div>
             </div>
           {% endfor %}
@@ -211,23 +224,38 @@
       <p class="text-xs text-slate-500 mb-4">No support tickets opened during this journey.</p>
     {% endfor %}
 
-    <h3 class="text-xs font-semibold uppercase text-slate-400 mt-4 mb-2">Versioned Outcome History (OUT-007 / OUT-010)</h3>
+    <h3 class="text-xs font-semibold uppercase text-slate-400 mt-4 mb-2">Outcome Calculation History</h3>
     <div class="space-y-2 text-xs">
       {% for oh in detail.outcome_history %}
-        <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
+        <div class="p-3 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
           <div>
             <span class="font-mono font-bold text-indigo-400">{{ oh.calculation_version }}</span>
-            <span class="font-mono text-slate-300 ml-2">{{ oh.outcome_business_id }}</span>
-            <div class="text-slate-500">Calculated: {{ oh.calculated_at }} | Reason: {{ oh.outcome_reason }}</div>
+            <span class="text-slate-300 ml-2">{{ oh.outcome_reason | label_reason }}</span>
+            <div class="text-slate-500">Calculated: {{ oh.calculated_at | format_ts }}</div>
           </div>
           <div class="text-right">
-            <div class="font-bold text-white">{{ oh.outcome_status }}</div>
-            <div class="font-mono text-slate-400">{{ oh.attribution_status }}</div>
+            <div class="font-bold text-white" title="{{ oh.outcome_status }}">{{ oh.outcome_status | label_outcome }}</div>
+            <div class="text-slate-400" title="{{ oh.attribution_status }}">{{ oh.attribution_status | label_attribution }}</div>
           </div>
         </div>
       {% endfor %}
     </div>
   </div>
 </div>
-{% endblock %}
 
+<details class="bg-slate-900/60 border border-slate-800 rounded-xl px-5 py-3 text-xs text-slate-400">
+  <summary class="cursor-pointer font-medium text-slate-300 hover:text-white select-none">
+    Technical Details (Internal IDs, field names, raw enum codes &amp; API JSON)
+  </summary>
+  <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2 font-mono text-[11px]">
+    <div>Journey UUID: {{ j.journey_id }} | Identity Version: v{{ j.identity_version }} | <a href="/api/v1/journeys/{{ j.journey_business_id }}" target="_blank" class="text-indigo-400 underline">Raw JSON Payload</a></div>
+    {% if out %}
+      <div>Outcome record: {{ out.outcome_business_id }} | status={{ out.outcome_status }} | attribution={{ out.attribution_status }} | reason={{ out.outcome_reason }}</div>
+    {% endif %}
+    {% if detail.payment_attempts %}
+      <div>Payment failure codes: {% for pa in detail.payment_attempts %}{% if pa.failure_reason %}{{ pa.payment_attempt_business_id }}={{ pa.failure_reason }} {% endif %}{% endfor %}</div>
+    {% endif %}
+    <div>Event schema keys: event_timestamp &rarr; Event time | ingestion_timestamp &rarr; Received time | client_instance_id &rarr; Client instance | source_purchase_reference &rarr; Purchase reference</div>
+  </div>
+</details>
+{% endblock %}

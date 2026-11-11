@@ -10,42 +10,41 @@
 </head>
 <body class="min-h-full flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
   <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <div class="flex items-center gap-6">
-        <a href="/dashboard" class="flex items-center gap-2.5">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 py-2.5 xl:py-0 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-3 sm:gap-6 min-w-0 max-w-full">
+        <a href="/dashboard" class="flex items-center gap-2.5 shrink-0">
           <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-sm">
             JQ
           </div>
           <div>
             <span class="text-lg font-bold tracking-tight text-white">JourneyIQ</span>
             <span class="hidden sm:inline-block ml-2 text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              Canonical Analytics MVP
+              Customer Analytics
             </span>
           </div>
         </a>
-        <nav class="flex items-center gap-1 text-sm font-medium">
-          <a href="/dashboard" class="px-3 py-2 rounded-md transition {% if active_nav == 'dashboard' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+        <nav aria-label="Primary navigation" class="flex flex-wrap items-center gap-1 text-xs sm:text-sm font-medium w-full lg:w-auto">
+          <a href="/dashboard" class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md transition whitespace-nowrap {% if active_nav == 'dashboard' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
             Overview
           </a>
-          <a href="/funnels" class="px-3 py-2 rounded-md transition {% if active_nav == 'funnels' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
-            5-Stage Funnel
+          <a href="/funnels" class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md transition whitespace-nowrap {% if active_nav == 'funnels' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+            Conversion Funnel
           </a>
-          <a href="/journeys" class="px-3 py-2 rounded-md transition {% if active_nav == 'journeys' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
-            Journeys &amp; Timeline
+          <a href="/journeys" class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md transition whitespace-nowrap {% if active_nav == 'journeys' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+            Customer Journeys
           </a>
-          <a href="/exceptions" class="px-3 py-2 rounded-md transition {% if active_nav == 'exceptions' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
-            Anomalies &amp; Quarantine
+          <a href="/exceptions" class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md transition whitespace-nowrap {% if active_nav == 'exceptions' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+            Data Quality
           </a>
-          <a href="/experiments" class="px-3 py-2 rounded-md transition {% if active_nav == 'experiments' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
+          <a href="/experiments" class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md transition whitespace-nowrap {% if active_nav == 'experiments' %}bg-indigo-600 text-white{% else %}text-slate-300 hover:bg-slate-800 hover:text-white{% endif %}">
             Experiments
           </a>
         </nav>
       </div>
-      <div class="flex items-center gap-3 text-xs text-slate-400">
-        <a href="/journeys/JRN-HERO-001" class="px-2.5 py-1.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 font-medium">
-          Inspect Hero Journey (JRN-HERO-001)
+      <div class="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-400">
+        <a href="/journeys/JRN-HERO-001" class="px-2.5 py-1.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 font-medium whitespace-nowrap">
+          Sample Journey (JRN-HERO-001)
         </a>
-        <a href="/api/v1/health" target="_blank" class="hover:text-slate-200 underline">API Health</a>
       </div>
     </div>
   </header>
@@ -56,8 +55,11 @@
 
   <footer class="border-t border-slate-800/80 bg-slate-900/50 py-4 text-xs text-slate-500">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap justify-between gap-2">
-      <span>JourneyIQ — Deterministic Customer Journey Reconstruction, Attribution &amp; Anomaly Guardrails</span>
-      <span>Seed: 42 | Attribution Window: 7 Days | Session Inactivity: 30m | Cart Abandonment: 24h</span>
+      <span>JourneyIQ — Customer Journey Analytics, Attribution &amp; Data Quality</span>
+      <span class="flex items-center gap-3">
+        <span>7-Day Attribution Window &bull; 30-Min Session Timeout &bull; 24-Hour Cart Abandonment</span>
+        <a href="/api/v1/health" target="_blank" class="hover:text-slate-300 underline">System Health</a>
+      </span>
     </div>
   </footer>
 </body>

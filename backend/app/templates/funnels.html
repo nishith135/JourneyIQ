@@ -4,53 +4,53 @@
   <div>
     <h1 class="text-2xl font-bold text-white">5-Stage Conversion Funnel Analysis</h1>
     <p class="text-sm text-slate-400 mt-1">
-      Compares <strong>Stage Reach</strong> (any session reaching the stage) against <strong>Strict Sequential Progression</strong> (stages reached in non-decreasing timestamp order).
+      Compares <strong>Stage Reach</strong> (any session reaching the stage) against <strong>Strict Sequential Progression</strong> (stages completed in chronological order).
     </p>
   </div>
   <form method="get" action="/funnels" class="flex flex-wrap items-center gap-2 bg-slate-900 border border-slate-800 p-2 rounded-xl text-xs">
     <label class="text-slate-400 px-2">Channel:</label>
     <select name="channel" onchange="this.form.submit()" class="bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
-      <option value="ALL" {% if channel == 'ALL' %}selected{% endif %}>All Channels (WEB + APP)</option>
-      <option value="WEB" {% if channel == 'WEB' %}selected{% endif %}>WEB Only</option>
-      <option value="APP" {% if channel == 'APP' %}selected{% endif %}>APP Only</option>
+      <option value="ALL" {% if channel == 'ALL' %}selected{% endif %}>All Channels (Web + App)</option>
+      <option value="WEB" {% if channel == 'WEB' %}selected{% endif %}>Web only</option>
+      <option value="APP" {% if channel == 'APP' %}selected{% endif %}>App only</option>
     </select>
-    <label class="text-slate-400 px-2">Bots:</label>
+    <label class="text-slate-400 px-2">Traffic:</label>
     <select name="exclude_bots" onchange="this.form.submit()" class="bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
-      <option value="true" {% if exclude_bots %}selected{% endif %}>Exclude Bots (Human Only)</option>
-      <option value="false" {% if not exclude_bots %}selected{% endif %}>Include Bot Sessions</option>
+      <option value="true" {% if exclude_bots %}selected{% endif %}>Human traffic only</option>
+      <option value="false" {% if not exclude_bots %}selected{% endif %}>Include bot traffic</option>
     </select>
   </form>
 </div>
 
 <!-- Summary Callout Cards -->
-<div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-8">
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
     <div class="text-xs text-slate-400">Eligible Sessions in Scope</div>
-    <div class="text-2xl font-bold text-white mt-1">{{ funnel.eligible_sessions_count }}</div>
-    <div class="text-xs text-slate-500 mt-1">Bots excluded: {{ funnel.bot_sessions_excluded }}</div>
+    <div class="text-2xl font-bold text-white mt-1 tabular-nums">{{ funnel.eligible_sessions_count }}</div>
+    <div class="text-xs text-slate-500 mt-1">Bot sessions excluded: {{ funnel.bot_sessions_excluded }}</div>
   </div>
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
     <div class="text-xs text-slate-400">Session Conversion Rate</div>
-    <div class="text-2xl font-bold text-indigo-400 mt-1">{{ funnel.session_conversion_rate_pct }}%</div>
-    <div class="text-xs text-slate-500 mt-1">Single-session conversion denominator</div>
+    <div class="text-2xl font-bold text-indigo-400 mt-1 tabular-nums">{{ funnel.session_conversion_rate_pct }}%</div>
+    <div class="text-xs text-slate-500 mt-1">Converted single-session share</div>
   </div>
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
     <div class="text-xs text-slate-400">7-Day Journey Conversion Rate</div>
-    <div class="text-2xl font-bold text-emerald-400 mt-1">{{ funnel.journey_conversion_rate_pct }}%</div>
-    <div class="text-xs text-slate-500 mt-1">Multi-session 7-day window denominator (FN-003)</div>
+    <div class="text-2xl font-bold text-emerald-400 mt-1 tabular-nums">{{ funnel.journey_conversion_rate_pct }}%</div>
+    <div class="text-xs text-slate-500 mt-1">Multi-session 7-day attribution window</div>
   </div>
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
     <div class="text-xs text-slate-400">Skipped-Cart Direct Purchases</div>
-    <div class="text-2xl font-bold text-amber-400 mt-1">{{ funnel.skipped_cart_purchases }}</div>
-    <div class="text-xs text-slate-500 mt-1">Included in Stage 5 Reach; excluded from Strict Sequential (FN-002)</div>
+    <div class="text-2xl font-bold text-amber-400 mt-1 tabular-nums">{{ funnel.skipped_cart_purchases }}</div>
+    <div class="text-xs text-slate-500 mt-1">Counted in Stage Reach; excluded from Strict Sequential</div>
   </div>
 </div>
 
 <!-- Funnel Table -->
-<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-8">
-  <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-6">
+  <div class="px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
     <h2 class="text-base font-semibold text-white">Stage-by-Stage Conversion &amp; Drop-Off Breakdown</h2>
-    <span class="text-xs text-slate-400">Channel Filter: <strong class="text-slate-200">{{ funnel.channel_filter }}</strong></span>
+    <span class="text-xs text-slate-400">Channel Filter: <strong class="text-slate-200">{{ funnel.channel_filter | label_channel }}</strong></span>
   </div>
   <div class="overflow-x-auto">
     <table class="w-full text-left border-collapse text-sm">
@@ -68,24 +68,36 @@
       </thead>
       <tbody class="divide-y divide-slate-800/70">
         {% for st in funnel.stages %}
-        <tr class="hover:bg-slate-800/40">
+        <tr class="hover:bg-slate-800/40" title="Event code: {{ st.stage_key }}">
           <td class="py-4 px-6 font-medium text-white">
             <span class="inline-block w-2 h-2 rounded-full bg-indigo-500 mr-2"></span>
             {{ st.stage_label }}
-            <span class="block text-xs text-slate-500 font-mono ml-4">{{ st.stage_key }}</span>
           </td>
-          <td class="py-4 px-4 text-right font-semibold text-indigo-300">{{ st.reach_count }}</td>
-          <td class="py-4 px-4 text-right text-slate-300">{{ st.reach_step_conversion_pct }}%</td>
-          <td class="py-4 px-4 text-right text-rose-400">{{ st.reach_dropoff_pct }}%</td>
-          <td class="py-4 px-4 text-right font-semibold text-emerald-300 border-l border-slate-800">{{ st.sequential_count }}</td>
-          <td class="py-4 px-4 text-right text-slate-300">{{ st.sequential_step_conversion_pct }}%</td>
-          <td class="py-4 px-4 text-right text-rose-400">{{ st.sequential_dropoff_pct }}%</td>
-          <td class="py-4 px-6 text-right font-bold text-white">{{ st.sequential_overall_pct }}%</td>
+          <td class="py-4 px-4 text-right font-semibold text-indigo-300 tabular-nums">{{ st.reach_count }}</td>
+          <td class="py-4 px-4 text-right text-slate-300 tabular-nums">{{ st.reach_step_conversion_pct }}%</td>
+          <td class="py-4 px-4 text-right text-rose-400 tabular-nums">{{ st.reach_dropoff_pct }}%</td>
+          <td class="py-4 px-4 text-right font-semibold text-emerald-300 border-l border-slate-800 tabular-nums">{{ st.sequential_count }}</td>
+          <td class="py-4 px-4 text-right text-slate-300 tabular-nums">{{ st.sequential_step_conversion_pct }}%</td>
+          <td class="py-4 px-4 text-right text-rose-400 tabular-nums">{{ st.sequential_dropoff_pct }}%</td>
+          <td class="py-4 px-6 text-right font-bold text-white tabular-nums">{{ st.sequential_overall_pct }}%</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="py-8 px-6 text-center text-sm text-slate-400">No funnel stage data available for the selected filters.</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
-{% endblock %}
 
+<details class="bg-slate-900/60 border border-slate-800 rounded-xl px-5 py-3 text-xs text-slate-400">
+  <summary class="cursor-pointer font-medium text-slate-300 hover:text-white select-none">
+    Technical Details (Stage event codes &amp; funnel calculation rules)
+  </summary>
+  <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-1.5 font-mono text-[11px]">
+    <div>Stage event keys: {% for st in funnel.stages %}{{ st.stage_key }}{% if not loop.last %} &rarr; {% endif %}{% endfor %}</div>
+    <div>Calculation rules: FN-002 (non-fabricated skipped cart stages), FN-003 (session vs. 7-day journey denominator) | API: <a href="/api/v1/funnels" target="_blank" class="text-indigo-400 underline">/api/v1/funnels</a></div>
+  </div>
+</details>
+{% endblock %}
