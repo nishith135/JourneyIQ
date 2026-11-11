@@ -291,53 +291,60 @@ Wait-free credential safety: `backend/app/db/session.py` (`get_runtime_database_
 
 ---
 
-## Setup & Execution Instructions
+## Setup & Execution Instructions (Fresh Clone)
 
-### 1. Create Environment Configuration
-Copy `.env.example` to `.env` and populate your PostgreSQL 17 credentials (`SANDBOX_DATABASE_URL`, `RUNTIME_DB_TARGET=sandbox`).
+> [!NOTE]
+> `.env` and local PostgreSQL databases/CSVs (`.pgdata/`, `data-generation/sandbox-output/`) are intentionally excluded from Git. After cloning this repository, follow the steps below to configure `.env` and populate PostgreSQL before launching the UI.
 
-### 2. Start the FastAPI + Jinja2/HTMX Server
+### 1. Install Dependencies & Create `.env`
+Create a Python virtual environment, install dependencies from [`backend/requirements.txt`](backend/requirements.txt), and copy [`.env.example`](.env.example) to `.env`:
 ```powershell
-cd c:\CandidateWorkspace\journeyIQ\backend
-c:\CandidateWorkspace\journeyIQ\.venv\Scripts\uvicorn.exe app.main:app --host 127.0.0.1 --port 8000
+python -m venv .venv
+.\.venv\Scripts\pip.exe install -r backend\requirements.txt
+Copy-Item .env.example .env
 ```
-Then open:
-- Dashboard: `http://127.0.0.1:8000/dashboard`
-- Funnels: `http://127.0.0.1:8000/funnels`
-- Journeys Explorer: `http://127.0.0.1:8000/journeys` (`3,921` pages at `25` per page; sample hero journey: `/journeys/JRN-HERO-001`)
-- Exceptions & Quarantine: `http://127.0.0.1:8000/exceptions`
-- Experiments & Lift: `http://127.0.0.1:8000/experiments`
-- Health Check JSON: `http://127.0.0.1:8000/api/v1/health`
+Create an empty PostgreSQL 17 database (for example `journeyiq_sandbox`), then update `.env` with your local credentials:
+- Set `SANDBOX_DATABASE_URL` to your `journeyiq_sandbox` connection string
+- Set `RUNTIME_DB_TARGET=sandbox`
+- Set separate `DATABASE_URL` and `TEST_DATABASE_URL` values if you plan to run tests
 
-### 3. Dataset Generation, CSV Export & Validation (Reproducible `seed=42`)
-Both [`generate_data.py`](data-generation/generator/generate_data.py) and [`validate_data.py`](data-generation/validation/validate_data.py) require an explicit isolated target (`--db-env-var` or `--database-url`) and explicit `--output-dir`:
+### 2. Populate & Validate Dataset (`seed=42`)
+Both [`generate_data.py`](data-generation/generator/generate_data.py) and [`validate_data.py`](data-generation/validation/validate_data.py) require an explicit isolated target (`--db-env-var` or `--database-url`) and explicit `--output-dir`. Running `--confirm-reset` automatically creates all `22` tables and `80` indexes via SQLAlchemy `Base.metadata.create_all`:
 
 ```powershell
-cd c:\CandidateWorkspace\journeyIQ
-
-# MVP dataset (149 sessions, 510 events)
-c:\CandidateWorkspace\journeyIQ\.venv\Scripts\python.exe data-generation\generator\generate_data.py `
+# Option A — Quick MVP dataset (149 sessions, 510 events)
+.\.venv\Scripts\python.exe data-generation\generator\generate_data.py `
   --db-env-var SANDBOX_DATABASE_URL --seed 42 --scale mvp --confirm-reset `
   --output-dir data-generation\sandbox-output\seed-42-mvp
 
-# Full-scale dataset (~2.05M events, chunked psycopg COPY + optional CSV export)
-c:\CandidateWorkspace\journeyIQ\.venv\Scripts\python.exe data-generation\generator\generate_data.py `
+# Option B — Full-scale dataset (107,801 sessions, 2,053,601 events + optional CSV export)
+.\.venv\Scripts\python.exe data-generation\generator\generate_data.py `
   --db-env-var SANDBOX_DATABASE_URL --seed 42 --scale full --confirm-reset --export-csv `
   --output-dir data-generation\sandbox-output\seed-42-full
 
 # Non-destructive SQL aggregate & anti-join validator (7 checks)
-c:\CandidateWorkspace\journeyIQ\.venv\Scripts\python.exe data-generation\validation\validate_data.py `
+.\.venv\Scripts\python.exe data-generation\validation\validate_data.py `
   --db-env-var SANDBOX_DATABASE_URL `
   --output-dir data-generation\sandbox-output\seed-42-full
 ```
 
-Also see the data exploration notebook at [journeyiq_data_exploration.ipynb](data-generation/notebooks/journeyiq_data_exploration.ipynb).
+### 3. Start the FastAPI + Jinja2/HTMX Server
+```powershell
+cd backend
+..\.venv\Scripts\uvicorn.exe app.main:app --host 127.0.0.1 --port 8000
+```
+Then open:
+- Dashboard: `http://127.0.0.1:8000/dashboard`
+- Funnels: `http://127.0.0.1:8000/funnels`
+- Journeys Explorer: `http://127.0.0.1:8000/journeys` (`3,921` pages at `25` per page at full scale; sample hero journey: `/journeys/JRN-HERO-001`)
+- Exceptions & Quarantine: `http://127.0.0.1:8000/exceptions`
+- Experiments & Lift: `http://127.0.0.1:8000/experiments`
+- Health Check JSON: `http://127.0.0.1:8000/api/v1/health`
 
 ### 4. Run Automated Safety & Workflow Tests
 Pass an isolated `TEST_DATABASE_URL` (separate from both `journeyiq` and `journeyiq_sandbox`) when running [`test_mandatory_workflows.py`](backend/tests/test_mandatory_workflows.py):
 ```powershell
-cd c:\CandidateWorkspace\journeyIQ
-c:\CandidateWorkspace\journeyIQ\.venv\Scripts\pytest.exe backend\tests\test_mandatory_workflows.py -v
+.\.venv\Scripts\pytest.exe backend\tests\test_mandatory_workflows.py -v
 ```
 
 ---
